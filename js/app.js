@@ -10,7 +10,7 @@ let state = {
   shoes: [],
   seq: 1,
   lastWeekView: null,
-  mistral: { key: "", model: "mistral-small-latest", url: "https://api.mistral.com" },
+  mistral: { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" },
   chat: []        // conversation coach : [{role, content}]
 };
 
@@ -24,7 +24,7 @@ function normalizeState() {
   if (!state.done) state.done = {};
   if (!state.runs) state.runs = [];
   if (!state.shoes) state.shoes = [];
-  if (!state.mistral) state.mistral = { key: "", model: "mistral-small-latest", url: "https://api.mistral.com" };
+  if (!state.mistral) state.mistral = { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" };
   if (!state.chat) state.chat = [];
 }
 load();
@@ -1132,7 +1132,7 @@ async function sendCoach() {
     save();
   } catch (err) {
     let msg = "Erreur du coach : " + err.message;
-    if (String(err).includes("Failed to fetch")) msg = "Impossible de joindre api.mistral.com (réseau, CORS ou clé invalide). Vérifie ta connexion et ta clé dans Réglages.";
+    if (String(err).includes("Failed to fetch")) msg = "Impossible de joindre l'API Mistral (réseau, CORS ou clé invalide). Vérifie ta connexion et ta clé dans Réglages.";
     state.chat.push({ role: "assistant", content: msg });
     save();
   }
@@ -1151,12 +1151,12 @@ function renderSettings() {
     '<div class="form-grid">' +
     '<label class="full">Clé API Mistral <input type="password" id="st-key" placeholder="https://console.mistral.com → API keys" value="' + esc(state.mistral.key) + '"></label>' +
     '<label>Modèle <select id="st-model">' +
-      ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "open-mistral-nemo"].map(m =>
+      ["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest"].map(m =>
         '<option value="' + m + '"' + (state.mistral.model === m ? " selected" : "") + ">" + m + "</option>").join("") +
       "</select></label>" +
     '<label>URL de l\'API <input type="text" id="st-url" value="' + esc(state.mistral.url) + '"></label>' +
     "</div>" +
-    '<div class="muted small">La clé est stockée uniquement dans ce navigateur et envoyée directement à api.mistral.com. ' +
+    '<div class="muted small">La clé est stockée uniquement dans ce navigateur et envoyée directement à api.mistral.ai. ' +
     "Le skill « coach trail » transmet à chaque question : semaine en cours, séances cochées, dernières sorties, douleurs, usure des chaussures.</div>" +
     '<div class="row-actions"><button class="btn primary" id="st-save">Enregistrer</button>' +
     '<button class="btn" id="st-test">Tester la connexion au coach</button>' +
@@ -1170,7 +1170,7 @@ function renderSettings() {
     state.start = $("#st-start").value || DEFAULT_START;
     state.mistral.key = $("#st-key").value.trim();
     state.mistral.model = $("#st-model").value;
-    state.mistral.url = $("#st-url").value.trim() || "https://api.mistral.com";
+    state.mistral.url = $("#st-url").value.trim() || "https://api.mistral.ai";
     save(); toast("Réglages enregistrés."); updateHeader(); renderToday();
   });
   $("#st-test").addEventListener("click", async () => {
@@ -1178,7 +1178,7 @@ function renderSettings() {
     if (!key) { toast("Entre d'abord une clé API."); return; }
     toast("Test en cours…");
     try {
-      const res = await fetch(($("#st-url").value.trim() || "https://api.mistral.com") + "/v1/models", {
+      const res = await fetch(($("#st-url").value.trim() || "https://api.mistral.ai") + "/v1/models", {
         headers: { "Authorization": "Bearer " + key } });
       if (res.ok) toast("Connexion OK — le coach est prêt.");
       else if (res.status === 401) toast("Clé refusée (401). Vérifie la clé sur console.mistral.com.");
