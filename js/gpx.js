@@ -54,6 +54,17 @@ const Geo = {
     return out;
   },
 
+  /* version compacte pour le localStorage : moins de points, coordonnées arrondies (~1 m) */
+  compact(pts, max) {
+    max = max || 1200;
+    return this.decimate(pts, max).map(p => ({
+      lat: Math.round(p.lat * 1e5) / 1e5,
+      lon: Math.round(p.lon * 1e5) / 1e5,
+      ele: p.ele == null ? null : Math.round(p.ele * 10) / 10,
+      t: p.t
+    }));
+  },
+
   toGpx(name, pts) {
     const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     let trkpts = "";
