@@ -1,0 +1,867 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[french]{babel}
+\usepackage[a4paper,top=1.4cm,bottom=1.5cm,left=1.7cm,right=1.7cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+\usepackage[table]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{babel,arrows.meta}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
+\usepackage{pdflscape}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{multicol}
+\usepackage[hidelinks]{hyperref}
+
+% ---------------- Couleurs & style ----------------
+\definecolor{acc}{RGB}{22,58,96}        % bleu nuit
+\definecolor{acc2}{RGB}{0,110,110}     % teal
+\definecolor{acclight}{RGB}{235,241,248}
+\definecolor{warn}{RGB}{150,40,40}
+\definecolor{grey1}{RGB}{95,105,115}
+
+\titleformat{\section}{\sffamily\Large\bfseries\color{acc}}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\sffamily\large\bfseries\color{acc}}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\sffamily\normalsize\bfseries\color{acc!85}}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{16pt}{8pt}
+\titlespacing*{\subsection}{0pt}{12pt}{6pt}
+\titlespacing*{\subsubsection}{0pt}{10pt}{5pt}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize\itshape\color{grey1} Trail des Forts 72 km -- Besan\c{c}on -- 9 mai 2027}
+\fancyhead[R]{\footnotesize\color{grey1}\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\setlist{topsep=3pt,itemsep=2pt,parsep=0pt}
+\newcommand{\key}[1]{\textbf{\sffamily\small\color{acc}#1}}
+\newcommand{\jday}[1]{\textbf{\sffamily\footnotesize\color{acc}#1}}
+
+% Boîte "à retenir"
+\newtcolorbox{aret}{colback=acclight,colframe=acc!60,boxrule=0.5pt,arc=2pt,
+  left=6pt,right=6pt,top=5pt,bottom=5pt,fonttitle=\bfseries\sffamily\small,title={}}
+
+% ---------------- Liens internes ----------------
+\newcommand{\exlk}[2]{\hyperlink{#1}{#2}}
+\newcommand{\rma}{\hyperlink{rm-a}{RM-A}}
+\newcommand{\rmb}{\hyperlink{rm-b}{RM-B}}
+\newcommand{\rmc}{\hyperlink{rm-c}{RM-C}}
+\newcommand{\sqa}{\hyperlink{sq1}{SQ1}}
+\newcommand{\sqb}{\hyperlink{sq2}{SQ2}}
+\newcommand{\sqc}{\hyperlink{sq3}{SQ3}}
+\newcommand{\sqd}{\hyperlink{sq4}{SQ4}}
+\newcommand{\dtl}{\hyperlink{dt}{DT}}
+\newcommand{\gam}{\hyperlink{gammes}{gammes}}
+\newcommand{\sln}{\hyperlink{legende}{SL}}
+
+% ---------------- Figures (bonshommes schématiques, dessinées en TikZ) ----------------
+\tikzset{
+  se/.style={line width=1.5pt, line cap=round, line join=round},
+  hd/.style={fill},
+  gr/.style={line width=1.3pt, black!50},
+  bl/.style={fill=black!10, draw=black!40, line width=0.5pt},
+  mv/.style={-{Latex[length=2mm]}, line width=0.9pt, black!60, shorten >=1pt},
+}
+\newcommand{\thd}[2]{\fill[hd] (#1,#2) circle (0.165);}
+
+% --- Squat ---
+\newcommand{\figSquat}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-0.55,0) -- (1.75,0);
+\draw[se] (1.02,0.07) -- (0.78,0.52) -- (0.38,0.63);
+\draw[se] (0.38,0.63) -- (0.74,1.14);
+\thd{0.82}{1.35}
+\draw[se] (0.74,1.14) -- (1.28,1.06);
+\draw[se] (1.02,0.07) -- (1.3,0.07);
+\draw[mv] (1.45,0.85) -- (1.45,0.4);
+\end{tikzpicture}}
+
+% --- Fente arrière ---
+\newcommand{\figFente}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-0.95,0) -- (1.55,0);
+\draw[se] (1.06,0.07) -- (0.86,0.56) -- (0.52,0.88);
+\draw[se] (0.52,0.88) -- (0.05,0.32) -- (-0.52,0.09);
+\draw[se] (0.52,0.88) -- (0.55,1.48);
+\thd{0.58}{1.7}
+\draw[se] (0.55,1.44) -- (0.78,1.02);
+\draw[se] (1.06,0.07) -- (1.32,0.07);
+\draw[se] (-0.52,0.09) -- (-0.76,0.07);
+\end{tikzpicture}}
+
+% --- Step-up ---
+\newcommand{\figStep}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-0.5,0) -- (2,0);
+\draw[bl] (0.95,0) rectangle (1.85,0.55);
+\draw[se] (1.42,0.62) -- (1.45,1.04) -- (0.92,1.2);
+\draw[se] (0.92,1.2) -- (0.97,1.72);
+\thd{1.0}{1.93}
+\draw[se] (0.92,1.2) -- (1.48,1.12) -- (1.62,1.42);
+\draw[se] (0.95,1.64) -- (0.5,1.28);
+\draw[se] (1.42,0.62) -- (1.66,0.62);
+\end{tikzpicture}}
+
+% --- Squat bulgare ---
+\newcommand{\figBulgare}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-0.45,0) -- (1.45,0);
+\draw[bl] (-1.4,0) rectangle (-0.72,0.42);
+\draw[se] (-1.05,0.5) -- (-0.48,0.36) -- (0.12,0.92);
+\draw[se] (0.12,0.92) -- (0.62,0.47) -- (0.86,0.08);
+\draw[se] (0.12,0.92) -- (0.2,1.5);
+\thd{0.23}{1.72}
+\draw[se] (0.2,1.46) -- (0.58,1.08);
+\draw[se] (0.86,0.08) -- (1.1,0.08);
+\end{tikzpicture}}
+
+% --- Pont fessier ---
+\newcommand{\figPont}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-1.35,0) -- (1.45,0);
+\thd{-1.02}{0.19}
+\draw[se] (-0.84,0.15) -- (-0.35,0.15);
+\draw[se] (-0.35,0.15) -- (0.3,0.63);
+\draw[se] (0.3,0.63) -- (0.78,0.5) -- (0.98,0.1);
+\draw[se] (0.98,0.1) -- (1.22,0.1);
+\draw[se] (-0.35,0.15) -- (-0.52,0.05);
+\draw[mv] (0.3,0.95) -- (0.3,0.7);
+\end{tikzpicture}}
+
+% --- Planche (avant-bras) ---
+\newcommand{\figPlanche}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-1.5,0) -- (1.25,0);
+\draw[se] (-0.95,0.08) -- (-0.45,0.08);
+\draw[se] (-0.95,0.08) -- (-0.92,0.47);
+\draw[se] (-0.92,0.47) -- (0.08,0.44);
+\draw[se] (0.08,0.44) -- (0.55,0.3);
+\draw[se] (0.55,0.3) -- (0.92,0.14);
+\draw[se] (0.08,0.44) -- (0.5,0.34);
+\draw[se] (0.5,0.34) -- (0.86,0.19);
+\thd{-1.2}{0.65}
+\end{tikzpicture}}
+
+% --- Planche latérale ---
+\newcommand{\figLat}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-1.5,0) -- (1.25,0);
+\draw[se] (-0.75,0.08) -- (-0.25,0.08);
+\draw[se] (-0.75,0.08) -- (-0.72,0.52);
+\draw[se] (-0.72,0.52) -- (0.18,0.62);
+\draw[se] (0.18,0.62) -- (0.62,0.44);
+\draw[se] (0.62,0.44) -- (0.98,0.16);
+\draw[se] (-0.72,0.52) -- (-0.3,1.08);
+\thd{-0.98}{0.72}
+\end{tikzpicture}}
+
+% --- Mollets sur une marche ---
+\newcommand{\figMollets}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-0.45,0) -- (1.75,0);
+\draw[bl] (0.58,0) rectangle (1.72,0.42);
+\draw[se] (0.32,0.16) -- (0.62,0.46);
+\draw[se] (0.62,0.46) -- (0.64,0.56);
+\draw[se] (0.64,0.56) -- (0.66,1.06);
+\draw[se] (0.66,1.06) -- (0.66,1.46);
+\draw[se] (0.66,1.46) -- (0.64,1.88);
+\thd{0.64}{2.1}
+\draw[se] (0.66,1.46) -- (0.4,1.5);
+\draw[mv] (0.2,0.5) -- (0.55,0.62);
+\end{tikzpicture}}
+
+% --- Proprioception unipodale ---
+\newcommand{\figProprio}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-1.25,0) -- (1.25,0);
+\draw[se,dashed,black!60] (0,0.03) ellipse (0.42 and 0.09);
+\draw[se] (0,1.38) -- (0.06,0.8) -- (0,0.14);
+\draw[se] (0,0.14) -- (-0.22,0.06) -- (0.22,0.06);
+\draw[se] (0,1.38) -- (-0.34,1.02) -- (-0.16,1.34);
+\draw[se] (0,1.38) -- (0,1.76);
+\draw[se] (-0.34,1.76) -- (0.34,1.76);
+\draw[se] (-0.34,1.76) -- (-0.8,1.55);
+\draw[se] (0.34,1.76) -- (0.8,1.55);
+\thd{0}{2.02}
+\end{tikzpicture}}
+
+% --- Dead bug ---
+\newcommand{\figDeadbug}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-1.3,0) -- (1.35,0);
+\thd{-0.88}{0.19}
+\draw[se] (-0.7,0.14) -- (-0.14,0.14);
+\draw[se] (-0.14,0.14) -- (0.42,0.52) -- (0.74,0.88);
+\draw[se] (-0.14,0.14) -- (0.32,0.11) -- (0.74,0.09);
+\draw[se] (-0.58,0.14) -- (-0.8,0.86);
+\draw[se] (-0.58,0.14) -- (-0.28,0.06);
+\end{tikzpicture}}
+
+% --- Bird dog ---
+\newcommand{\figBirddog}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-1.55,0) -- (1.35,0);
+\draw[se] (-0.55,0.09) -- (-0.55,0.57);
+\draw[se] (0.48,0.09) -- (0.3,0.58);
+\draw[se] (-0.55,0.57) -- (0.3,0.6);
+\draw[se] (-0.55,0.57) -- (-1.12,0.98);
+\draw[se] (0.3,0.6) -- (0.9,1.04);
+\draw[se] (0.48,0.09) -- (0.8,0.09);
+\thd{-0.9}{0.72}
+\end{tikzpicture}}
+
+% --- Descente de marche lente (excentrique) ---
+\newcommand{\figStepdown}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-0.5,0) -- (1.85,0);
+\draw[bl] (0.62,0) rectangle (1.78,0.52);
+\draw[se] (0.88,0.6) -- (0.88,1.04) -- (0.88,1.44);
+\draw[se] (0.88,1.44) -- (0.84,1.87);
+\thd{0.84}{2.08}
+\draw[se] (0.88,1.44) -- (0.52,0.92) -- (0.47,0.52);
+\draw[se] (0.88,0.6) -- (1.12,0.6);
+\draw[se] (0.86,1.78) -- (1.2,1.52);
+\draw[se] (0.86,1.78) -- (0.52,1.52);
+\draw[mv] (0.47,0.45) -- (0.47,0.1);
+\node[font=\tiny, black!60, anchor=west] at (0.55,0.22) {4 s};
+\end{tikzpicture}}
+
+% --- Marche du monstre (élastique) ---
+\newcommand{\figMonstre}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-1.3,0) -- (1.4,0);
+\draw[se] (0,1.32) -- (-0.3,0.74) -- (-0.32,0.12);
+\draw[se] (0,1.32) -- (0.46,0.74) -- (0.64,0.12);
+\draw[se] (-0.32,0.12) -- (-0.54,0.12);
+\draw[se] (0.64,0.12) -- (0.86,0.12);
+\draw[se] (0,1.32) -- (0,1.74);
+\draw[se] (-0.34,1.74) -- (0.34,1.74);
+\draw[se] (-0.34,1.74) -- (-0.6,1.28);
+\draw[se] (0.34,1.74) -- (0.6,1.28);
+\draw[se,dashed,black!70,line width=0.8pt] (-0.32,0.17) .. controls (0.16,0.02) .. (0.64,0.17);
+\thd{0}{2.02}
+\end{tikzpicture}}
+
+% --- Technique de descente ---
+\newcommand{\figDescente}{\begin{tikzpicture}[scale=0.92]
+\draw[gr] (-1.5,1.3) -- (1.45,0);
+\draw[se] (0.16,0.52) -- (0.44,0.97) -- (0.26,1.4);
+\draw[se] (0.26,1.4) -- (0.52,1.82);
+\thd{0.64}{2.0}
+\draw[se] (0.26,1.4) -- (-0.26,1.12) -- (-0.58,1.02);
+\draw[se] (0.52,1.77) -- (1.08,1.58);
+\draw[se] (0.52,1.77) -- (-0.06,1.66);
+\draw[se] (0.16,0.52) -- (0.42,0.44);
+\draw[mv] (0.8,1.9) -- (1.2,1.5);
+\end{tikzpicture}}
+
+% Bloc exercice : image à gauche, texte à droite ; #5 = clé d'hyperlien
+\newcommand{\exo}[5]{%
+\noindent
+\begin{minipage}[c]{0.3\textwidth}\centering #1\end{minipage}%
+\begin{minipage}[c]{0.68\textwidth}
+\hypertarget{#5}{}\textbf{\sffamily\color{acc}#2}\ {\footnotesize\itshape\color{grey1}(#3)}\\
+{\small #4}
+\end{minipage}\par\vspace{5pt}\hrule height 0.3pt\vspace{8pt}}
+
+\begin{document}
+
+% ============================ PAGE DE TITRE ============================
+\thispagestyle{empty}
+\begin{center}
+\vspace*{1.2cm}
+{\sffamily\color{grey1}\large PROGRAMME D'ENTRA\^INEMENT PERSONNALIS\'E}\\[14pt]
+{\sffamily\bfseries\color{acc}\Huge Trail des Forts}\\[6pt]
+{\sffamily\bfseries\color{acc}\LARGE 72 km -- 2\,800 m D+/D-}\\[12pt]
+{\sffamily\large Besan\c{c}on -- dimanche 9 mai 2027}\\[20pt]
+{\sffamily\large 29 semaines de pr\'eparation, du 19 octobre 2026 au 9 mai 2027}\\[24pt]
+\begin{minipage}{0.82\textwidth}\centering\itshape\small
+Programme con\c{c}u pour un emploi du temps de p\`ere de famille :
+hatha yoga et natation le lundi, course \`a la pause du midi le mercredi
+et le vendredi, renforcement le matin, v\'elo le samedi, sortie longue
+une semaine sur deux.
+\end{minipage}
+\end{center}
+
+\vspace{1.1cm}
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{\'Epreuve} & Trail des Forts, 72 km solo, 2\,800 m D+ / 2\,800 m D- \\
+\textbf{Lieu} & Besan\c{c}on (25) -- sentiers et fortifications, patrimoine UNESCO \\
+\textbf{Date vis\'ee} & Dimanche 9 mai 2027 (24\up{e} \'edition : 7--9 mai 2027) \\
+\textbf{Barri\`eres horaires} & calcul\'ees sur une moyenne de 6,2 km/h ($\approx$ 11 h 35 de course maxi) \\
+\textbf{Indicateur conseill\'e} & index UTMB $\approx$ 460 pour passer sereinement les barri\`eres \\
+\textbf{Terrain} & vallonn\'e, sentiers forestiers, passages techniques, escaliers \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\vspace{0.9cm}
+\begin{aret}
+\textbf{Important -- v\'erifiez la date du d\'epart.} Le site officiel annonce la 24\up{e} \'edition du \textbf{7 au 9 mai 2027} (inscriptions ouvertes depuis le 20 octobre 2026). Ce programme vise le \textbf{dimanche 9 mai 2027}, jour le plus probable du 72 km. Si votre d\'epart est confirm\'e \`a une autre date, d\'ecalez les quatre derni\`eres semaines en cons\'equence. Ce document ne remplace pas un avis m\'edical : effectuez un bilan de sant\'e avant de vous engager, notamment en raison de vos ant\'ec\'edents (entorse de cheville, tendinopathie chronique).
+\end{aret}
+
+\vfill
+\begin{center}\footnotesize\color{grey1}
+Document g\'en\'er\'e le 20 octobre 2026, mis \`a jour le 27 octobre 2026 -- sources : donn\'ees personnelles du coureur (Donnees\_preparation\_trail.txt), site officiel traildesforts.com, litt\'erature entra\^inement trail.
+\end{center}
+\newpage
+
+\thispagestyle{fancy}
+{\sffamily\color{acc}\Large\bfseries Sommaire}
+\vspace{6pt}\hrule height 0.6pt\vspace{10pt}
+\tableofcontents
+\newpage
+
+% ============================ 1. OBJECTIF ET PRINCIPES ============================
+\section{Objectif et principes}
+
+\subsection{L'\'epreuve}
+Le Trail des Forts de Besan\c{c}on relie les 12 forts qui ceinturent la cit\'e
+de Vauban : 72 km de sentiers forestiers vallonn\'es, 2\,800 m de d\'enivel\'e
+positif et n\'egatif, une arriv\'ee par la Citadelle et son passage vertigineux.
+C'est une course d'\emph{endurance sp\'ecifique} : le d\'enivel\'e est mod\'er\'e
+(40 m/km) mais le cumul de mont\'ees-descentes et les barri\`eres horaires
+(6,2 km/h de moyenne) imposent de \textbf{courir les portions roulantes} et de
+\textbf{marcher vite les pentes raides}, sans jamais s'arr\^eter longtemps.
+Objectif r\'ealiste : terminer en 10 h 30 \`a 11 h 30.
+
+\subsection{Votre profil, et ce que le programme en fait}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}l>{\itshape}lX@{}}
+\toprule
+\textbf{Forces} & mont\'ee &
+exploit\'ees : c\^otes longues \`a la pause du midi, marche rapide en puissance
+dans les sorties longues, s\'eances seuil en d\'enivel\'e. \\
+\textbf{} & mental &
+exploit\'e : visualisation du parcours, segmentation de la course (12 forts = 12
+objectifs interm\'ediaires), sorties longues comme r\'ep\'etitions mentales. \\
+\midrule
+\textbf{Faiblesses} & cheville (entorse) &
+travail proprioceptif quotidien en premi\`ere phase puis 2--3 fois/semaine
+(\exlk{proprio}{proprioception unipodale}), renforcement des fibulaires et des
+mollets, \gam{} de course, progression prudente sur terrain technique. \\
+\textbf{} & tendinite chronique de l'essuie-glace (bandelette ilio-tibiale) &
+priorit\'e aux fessiers moyens
+(\exlk{planche-lat}{planche lat\'erale},
+\exlk{monstre}{marche du monstre}), automassage quotidien du TFL, pas courts et
+cadence \'elev\'ee en descente, volume en descente tr\`es progressif. \\
+\textbf{} & technique de descente &
+une s\'eance sp\'ecifique \dtl{} chaque semaine \`a partir de S7, int\'egr\'ee au
+footing du vendredi midi ; renforcement excentrique des quadriceps
+(\exlk{stepdown}{descente de marche lente}) ; sur la course : fr\'equence
+\'elev\'ee, regard loin, rel\^achement (voir section \ref{sec:prevention}). \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Les r\`egles d'or du programme}
+\begin{enumerate}
+\item \key{Progression 3+1} : trois semaines qui montent, une semaine
+d'all\'eger (S4, S8, S12, S16, S20, S24), puis l'aff\^utage. Le corps se
+renforce pendant le repos, pas pendant l'effort.
+\item \key{Sortie longue une semaine sur deux} : c'est votre contrainte
+d'emploi du temps, elle devient une force -- chaque sortie longue compte
+double : d\'enivel\'e, allure, mat\'eriel et ravitaillement test\'es.
+\item \key{Le renfort soutient la course} : s\'eances le matin (\rma{} le
+lundi, \rmb{} le jeudi) ou le jour d'un footing facile, jamais la veille
+d'une sortie longue ni d'une s\'eance de qualit\'e.
+\item \key{R\`eglement de la douleur} : douleur essuie-glace ou cheville
+$>$ 3/10 pendant deux s\'eances cons\'ecutives $\Rightarrow$ supprimer le
+d\'enivel\'e n\'egatif de la semaine et consulter un kin\'e si cela persiste.
+\item \key{La r\'egularit\'e bat le volume h\'ero\"ique} : il vaut mieux
+renoncer \`a une s\'eance que d'encha\^iner trois s\'eances en survitesse.
+\end{enumerate}
+
+\subsection{La semaine type}
+\begin{center}
+\small
+\begin{tabular}{@{}llllllll@{}}
+\toprule
+& \jday{Lundi} & \jday{Mardi} & \jday{Mercredi} & \jday{Jeudi} & \jday{Vendredi} & \jday{Samedi} & \jday{Dimanche}\\
+\midrule
+Matin & \rma{} & proprio & proprio & \rmb{} & proprio & -- & --\\
+Midi & yoga hatha & -- & course (qualit\'e) & -- & course + \dtl{} & -- & --\\
+Autre & natation & -- & -- & -- & -- & v\'elo & \sln{} (1 sem. sur 2)\\
+\bottomrule
+\end{tabular}
+\end{center}
+\smallskip
+Le yoga du lundi midi et la natation du lundi forment le p\^ole
+r\'ecup\'eration--mobilit\'e ; les cr\'eneaux du matin sont interchangeables,
+mais pas l'alternance effort/r\'ecup\'eration. En semaines sans sortie longue,
+le dimanche devient une sortie v\'elo (1 h 30 \`a 2 h), \'eventuellement
+suivie de 30' de course \`a pied pour travailler l'encha\^inement.
+
+% ============================ 2. VUE D'ENSEMBLE ============================
+\section{Vue d'ensemble des 29 semaines}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cl>{\small}cX@{}}
+\toprule
+\textbf{Bloc} & \textbf{Semaines} & \textbf{Dates} & \textbf{Objectif}\\
+\midrule
+\cellcolor{blue!8}1 & S1 -- S6 & 19/10 -- 29/11 & Fondation : base a\'erobienne, pr\'evention cheville et essuie-glace, mise en place des habitudes.\\
+\cellcolor{blue!14}2 & S7 -- S14 & 30/11 -- 24/01 & D\'eveloppement : VMA, c\^otes, seuil, pliom\'etrie, apprentissage de la descente technique.\\
+\cellcolor{blue!22}3 & S15 -- S21 & 25/01 -- 14/03 & Sp\'ecifique I : sorties longues croissantes (1\,300 \`a 1\,700 m D+), seuil en d\'enivel\'e, essais ravitaillement.\\
+\cellcolor{blue!30}4 & S22 -- S25 & 15/03 -- 11/04 & Pic : les plus grosses semaines (sortie longue de 4 h 30 / 1\,900 m D+ en S23), r\'ep\'etition g\'en\'erale en S25.\\
+\cellcolor{teal!16}5 & S26 -- S29 & 12/04 -- 09/05 & Aff\^utage : r\'eduction progressive du volume, conservation de l'intensit\'e, course le 9 mai.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Volume hebdomadaire}
+\begin{center}
+\begin{tikzpicture}
+\begin{axis}[
+  width=17.2cm, height=6.2cm,
+  ybar, bar width=9pt, bar shift=0pt,
+  ylabel={\small heures / semaine},
+  symbolic x coords={S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20,S21,S22,S23,S24,S25,S26,S27,S28,S29},
+  xtick={S1,S2,S3,S4,S5,S6,S7,S8,S9,S10,S11,S12,S13,S14,S15,S16,S17,S18,S19,S20,S21,S22,S23,S24,S25,S26,S27,S28,S29},
+  xmin=S1, xmax=S29,
+  x tick label style={rotate=0, font=\tiny},
+  y tick label style={font=\tiny},
+  ymin=0, ymax=10, ymajorgrids=true,
+  grid style={black!12},
+  axis lines*=left,
+]
+\addplot[fill=blue!18,  draw=blue!45!black] coordinates {(S1,4.5) (S2,4.5) (S3,5) (S4,4) (S5,5.5) (S6,6)};
+\addplot[fill=blue!30,  draw=blue!45!black] coordinates {(S7,6.25) (S8,4.25) (S9,6.5) (S10,6.5) (S11,7) (S12,4) (S13,7.25) (S14,7.25)};
+\addplot[fill=blue!44,  draw=blue!45!black] coordinates {(S15,7.75) (S16,4.5) (S17,8) (S18,7) (S19,8.25) (S20,4) (S21,8.5)};
+\addplot[fill=blue!60,  draw=blue!45!black] coordinates {(S22,7.75) (S23,8.75) (S24,4.5) (S25,7.5)};
+\addplot[fill=teal!45,  draw=teal!55!black] coordinates {(S26,5) (S27,4.5) (S28,2.75)};
+\addplot[fill=red!55,   draw=red!55!black] coordinates {(S29,6.3)};
+\end{axis}
+\end{tikzpicture}\\
+{\footnotesize\itshape Volume indicatif hebdomadaire (course, v\'elo, natation, yoga et renforcement). La barre rouge est la semaine de course (72 km $\approx$ 6 \`a 8 h d'effort).}
+\end{center}
+
+\begin{aret}
+La sortie longue n'appara\^it qu'une semaine sur deux ; en contrepartie elle est
+toujours \emph{tr\`es} progressive : 1 h 15 en S1, 4 h 30 en S23. Le d\'enivel\'e
+des sorties longues culmine \`a 1\,900 m : avec le d\'enivel\'e accumul\'e dans
+la semaine, vous monterez jusqu'\`a 2\,500 m D+ par semaine au pic, \`a comparer
+aux 2\,800 m de la course parcourus en une journ\'ee.
+\end{aret}
+
+% ============================ 3. LEGENDE ET SEANCES ============================
+\section{L\'egende et s\'eances types}
+
+\hypertarget{legende}{}
+\subsection{Abr\'eviations}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\key{\rma{}, \rmb{}, \rmc{}} & routines de renforcement musculaire, d\'ecrites en section \ref{sec:renfo} (le matin, 20--35').\\
+\key{EP} & endurance sur le plat : footing souple, 65--75 \% de FCM.\\
+\key{EV} & endurance vallonn\'ee : 6--8 km \`a la pause du midi avec 200--300 m de D+.\\
+\key{\sqa{}--\sqd{}} & s\'eances de qualit\'e (d\'ecrites ci-dessous), le mercredi \`a la pause du midi.\\
+\key{\dtl{}} & descentes techniques, greff\'ees sur le footing du vendredi.\\
+\key{NAT} & natation (lundi) 40--45' : r\'ecup\'eration active et travail respiratoire.\\
+\key{YOGA} & hatha yoga (lundi midi) : mobilit\'e, respiration, gainage doux ; s\'eance de r\'ecup\'eration \`a part enti\`ere.\\
+\key{V} & v\'elo : \'equivalence 1 h de course $=$ 1 h 30 de v\'elo ; id\'eal en famille, souvent le samedi.\\
+\key{\sln{}} & sortie longue : 1 semaine sur 2, test mat\'eriel et ravitaillement.\\
+\key{Vol.} & volume indicatif de la semaine.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{S\'eances de qualit\'e (mercredi, \`a la pause du midi)}
+Toutes commencent par 15' d'\'echauffement progressif et se terminent par
+10' de retour au calme. Sur votre boucle vallonn\'ee, la c\^ote de 200--300 m
+de D+ fait office de stade.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}l>{\small\bfseries}lX@{}}
+\toprule
+\hypertarget{sq1}{}\sqa{} & VMA courte & 10 \`a 16 fois 30'' fort / 30'' lent (90--95 \% FCM), en c\^ote d\`es la S9.\\
+\hypertarget{sq2}{}\sqb{} & C\^otes & 4 \`a 10 mont\'ees de 1' \`a 3' (tempo \'elev\'e mais contr\^ol\'e), r\'ecup\'eration en descente en marchant puis en trottinant.\\
+\hypertarget{sq3}{}\sqc{} & Seuil & 2 \`a 4 blocs de 8' \`a 12' \`a allure semi-marathon (80--88 \% FCM), r\'ecup\'eration = un tiers du temps d'effort.\\
+\hypertarget{sq4}{}\sqd{} & Fartlek & 45' de course continue sur terrain vallonn\'e en alternant librement les allures : acc\'el\'erations en c\^ote, rel\^achement en descente.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\hypertarget{dt}{}
+\subsection{Descente technique (DT) -- vendredi}
+Au cours du footing du vendredi, r\'ep\'eter 4 \`a 10 descentes de 30'' \`a 1'
+sur la portion la plus pentue de votre boucle. Consignes : regard 3 \`a 5 m
+devant, pas courts et cadence \'elev\'ee, buste l\'eg\`erement pench\'e
+en avant (jamais en arri\`ere), bras larges pour l'\'equilibre. Progression :
+lent et contr\^ol\'e en bloc 2, rythme r\'eel en bloc 3, allure course en bloc 4.
+C'est la s\'eance qui prot\`ege votre genou (essuie-glace) \emph{et} votre
+cheville : n'en sautez aucune, mais ne la rendez jamais brutale.
+
+\hypertarget{gammes}{}
+\subsection{Gammes de course}
+Apr\`es l'\'echauffement d'une s\'eance (10' environ), 2 \`a 3 fois 20''
+chacune : mont\'ees de genoux, talons-fesses, foul\'ees bondissantes, puis
+3--4 lignes droites progressives. \`A faire une \`a deux fois par semaine
+(dans une s\'eance \sqa{}--\sqd{} ou le vendredi) : elles \'economisent la
+cheville et le tendon.
+
+% ============================ 4. RENFORCEMENT ============================
+\section{Renforcement musculaire}\label{sec:renfo}
+
+Le renforcement est votre assurance-vie : mont\'ees plus fortes, descentes
+sans cuisses en feu, posture stable en fin de course, genou et cheville
+prot\'eg\'es. Trois routines courtes, le matin, 20--35'. Faites chaque
+r\'ep\'etition lentement : quelques r\'ep\'etitions propres valent mieux
+qu'une s\'erie b\^acl\'ee. Progression : d'abord la technique (bloc 1),
+ensuite la charge (sac \`a dos lest\'e, halt\`eres) quand 20 r\'ep\'etitions
+sont faciles. Dans ce programme : \rma{} le lundi matin, \rmb{} le jeudi
+matin, \rmc{} le samedi matin des semaines 10 et 14 ; la proprioception
+(5') se glisse chaque matin, y compris les jours de course.
+
+\subsection{Routine RM-A -- Jambes et cha\^ine post\'erieure (30--35')}
+\hypertarget{rm-a}{}
+
+\exo{\figSquat}{Squat}{quadriceps, fessiers}{Pieds largeur de bassin, descendez
+jusqu'\`a cuisses parall\`eles au sol, dos droit, talons ancr\'es. 3 s\'eries de
+12 \`a 20 ; lestez (sac \`a dos) en bloc 2. Variante : squat saut\'e en \rmc{}}{squat}
+
+\exo{\figFente}{Fente arri\`ere}{\'equilibre, unilat\'eral}{Un grand pas en
+arri\`ere, le genou arri\`ere descend vers le sol sans le toucher, le genou
+avant reste au-dessus du pied. 3 s\'eries de 8--12 par jambe}{fente}
+
+\exo{\figStep}{Step-up}{geste de la mont\'ee}{Montez sur une marche ou un banc
+en poussant sur la jambe d'appui, sans vous aider de la jambe libre, redescendez
+pos\'e. 3 s\'eries de 8--12 par jambe ; augmentez la hauteur puis la charge}{stepup}
+
+\exo{\figBulgare}{Squat bulgare}{force unilat\'erale, contr\^ole du genou}{
+Pied arri\`ere sur une chaise, descendez vertical, buste droit. \`A partir du
+bloc 2 : 3 s\'eries de 8--10 par jambe}{bulgare}
+
+\exo{\figPont}{Pont fessier}{fessiers, ischio-jambiers}{Allong\'e, pieds \`a
+plat, poussez sur les talons pour lever les hanches, alignez \'epaules--hanches--genoux,
+2'' de pause en haut. 3 s\'eries de 15--20 ; version sur une jambe en bloc 3}{pont}
+
+\exo{\figMollets}{Mont\'ees sur pointes au bord d'une marche}{mollets, tendon
+d'Achille, cheville}{Pointes de pieds sur le bord d'une marche, talon qui
+descend bas, mont\'ee compl\`ete, 1'' de pause en haut. 3 s\'eries de 12--20 ;
+sur une jambe en bloc 2. L'exercice le plus rentable pour votre cheville}{mollets}
+
+\exo{\figStepdown}{Descente de marche lente (excentrique)}{quadriceps en
+excentrique : la cl\'e des descentes}{Debout sur une marche, descendez le pied
+libre vers le sol en 4 secondes, sans poser le talon, puis remontez pos\'e.
+2 s\'eries de 6 par jambe, \`a partir de S7. Vous pr\'eparez les cuisses \`a
+freiner 2\,800 m de descente}{stepdown}
+
+\subsection{Routine RM-B -- Tronc, fessiers et cheville (25--30')}
+\hypertarget{rm-b}{}
+C'est la routine \emph{anti-essuie-glace} et \emph{anti-entorse}. \`A faire
+deux fois par semaine, sans exception, toute l'ann\'ee.
+
+\exo{\figPlanche}{Planche sur les avant-bras}{tronc entier}{Avant-bras sous
+les \'epaules, corps align\'e, nombril rentr\'e, respirez. 3 s\'eries de 30''
+\`a 60''}{planche}
+
+\exo{\figLat}{Planche lat\'erale}{obliques et fessier moyen (essuie-glace)}{
+Sur l'avant-bras, hanche lev\'ee, corps align\'e, bras libre lev\'e vers le
+ciel. 3 s\'eries de 20'' \`a 45'' par c\^ot\'e ; montez les pieds pour
+durcir}{planche-lat}
+
+\exo{\figDeadbug}{Dead bug}{contr\^ole du bassin}{Sur le dos, lombaires
+coll\'ees au sol, tendez bras et jambe oppos\'es sans d\'ecoller le dos.
+2 s\'eries de 10 par c\^ot\'e, lent}{deadbug}
+
+\exo{\figBirddog}{Bird dog}{stabilit\'e dos et hanches}{\`A quatre pattes,
+tendez bras et jambe oppos\'es, sans basculer le bassin, 1'' de pause.
+2 s\'eries de 10 par c\^ot\'e}{birddog}
+
+\exo{\figProprio}{Proprioception unipodale}{cheville (entorse ancienne)}{
+Debout sur une jambe, genou l\'eg\`erement fl\'echi, tenez 30''. Progression :
+bras qui d\'ecrivent des cercles, yeux ferm\'es, puis sur un coussin ou une
+serviette pli\'ee, puis en attrapant une balle. 3 s\'eries par jambe --
+tous les jours en bloc 1, 2--3 fois/semaine ensuite, \emph{y compris le jour
+de la course, \`a l'\'echauffement}}{proprio}
+
+\exo{\figMonstre}{Marche du monstre avec \'elastique}{fessier moyen et TFL
+(essuie-glace)}{\'Elastique aux chevilles, demi-flexion, 10 pas de c\^ot\'e
+dans chaque sens en tenant la tension. 2 s\'eries de 10 pas par jambe.
+Si douleur : version allong\'ee sur le c\^ot\'e (coquillage)}{monstre}
+
+\subsection{Routine RM-C -- Pliom\'etrie et gammes (20', \`a partir de S10)}
+\hypertarget{rm-c}{}
+Une \`a deux fois par mois (S10 et S14), le matin apr\`es 10' d'\'echauffement
+(marche rapide puis \gam{}) :
+mont\'ees de genoux 3$\times$20'', talons-fesses 3$\times$20'', foul\'ees
+bondissantes 3$\times$20'', squats saut\'es ou sauts sur banc 3$\times$8,
+sauts de galet (sauts \`a cloche-pied en alternance) 2$\times$10 par jambe.
+Progressif, sur herbe ou sol souple, jamais sur sol dur si vous pesez plus de
+85 kg ou si la cheville parle. \`A partir du bloc 3, l'effet pliom\'etrique est
+entretenu par les descentes techniques du vendredi.
+
+\subsection{Placement et progression du renforcement}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}l>{\small}cX@{}}
+\toprule
+\textbf{P\'eriode} & \textbf{S\'eances/sem.} & \textbf{Contenu}\\
+\midrule
+Bloc 1 (S1--S6) & 2 & poids du corps, technique, plages hautes (15--20 r\'ep.), proprioception quotidienne.\\
+Bloc 2 (S7--S14) & 2 + \rmc{} & charge progressive (8--12 r\'ep. lest\'ees), excentriques, pliom\'etrie douce.\\
+Bloc 3 (S15--S21) & 2 (dont 1 courte) & entretien de force, excentriques accentu\'es, proprioception maintenue.\\
+Bloc 4 (S22--S25) & 1--2 courtes & entretien, jamais courbatur\'e pour les s\'eances cl\'es.\\
+Aff\^utage (S26--S29) & gainage l\'eger & arr\^et des exercices lourds 10 jours avant la course ; gainage/mobilit\'e l\'eger jusqu'\`a J--3.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{aret}
+Automassage quotidien (5', matin ou soir) : rouleau ou balle sur le
+fessier, le TFL (face externe de la hanche) et l'ext\'erieur de la cuisse
+-- la zone de l'essuie-glace -- puis \'etirements doux 20--30'' par groupe
+(ischios, quadriceps, mollets). Ce rituel fait partie de la
+pr\'evention au m\^eme titre que les s\'eances.
+\end{aret}
+
+% ============================ 5. DESCENTE / CHEVILLE / ESSUIE-GLACE ============================
+\section{Pr\'evention cibl\'ee : cheville, essuie-glace, descente}\label{sec:prevention}
+
+\subsection{Le genou de l'essuie-glace (bandelette ilio-tibiale)}
+La bandelette frotte sur le condyle externe du f\'emur : douleur lat\'erale
+du genou, typiquement en descente et \`a la marche. Les trois leviers du
+programme :
+\begin{itemize}
+\item \key{Renforcer les fessiers moyens} (\rmb{}) : un bassin stable r\'eduit
+l'inclinaison de la cuisse \`a chaque pas, donc le frottement.
+\item \key{Descentes tr\`es progressives} : la s\'eance \dtl{} augmente la dose
+de d\'enivel\'e n\'egatif d'environ 10--15 \% par mois -- c'est la marge
+s\'ecuritaire du tendon, ne la d\'epassez pas en ajoutant du D- ailleurs.
+\item \key{Pas courts, cadence \'elev\'ee} en descente (r\`egle : 175--185
+appuis/minute) : moins d'impact par pas, moins d'extension du genou.
+\end{itemize}
+Si la douleur r\'eappara\^it : suppression imm\'ediate des descentes rapides
+et du fartlek en c\^ote pendant 7--10 jours, \rmb{} maintenu, marche active
+en remplacement. Persistance apr\`es deux semaines : avis kin\'e.
+
+\subsection{La cheville}
+Une entorse ancienne laisse presque toujours un d\'eficit proprioceptif et
+des fibulaires faibles. Le trio gagnant, \`a garder des mois apr\`es la
+r\'emission :
+\begin{itemize}
+\item \exlk{proprio}{proprioception unipodale} : tous les jours en bloc 1,
+puis 3 fois par semaine ;
+\item \exlk{mollets}{mont\'ees sur pointes} (\rma{}) et \'elastique \`a la
+cheville : 2 $\times$ 15 inversions/\'eversions (amenez le pied en dedans puis
+en dehors contre l'\'elastique, lentement) ;
+\item \gam{} de course hebdomadaires, et sur les sorties techniques :
+regard devant, petits pas, confiance construite par r\'ep\'etition.
+\end{itemize}
+
+\subsection{La technique de descente, en une image}
+\begin{center}
+\hypertarget{descente}{}
+\begin{minipage}{0.34\textwidth}\centering\figDescente\end{minipage}%
+\begin{minipage}{0.63\textwidth}\small
+\textbf{Regard loin} (3--5 m), buste dans la pente, \textbf{pas courts sous
+le corps}, cadence \'elev\'ee, bras larges qui pilotent l'\'equilibre.
+On freine avec la posture -- bassin bas, genoux fl\'echis, appuis courts
+sous le corps : les cuisses absorbent la vitesse en continu -- et non avec
+des gestes d'urgence (pas de c\^ot\'e, talons qui mordent devant, appuis
+bloqu\'es), qui concentrent les chocs sur le genou et la cheville. Sur pente tr\`es
+raide : l\'eger pi\'etinement, talons variable. Laissez filer d\`es que le
+sentier le permet : la descente lib\'er\'ee consomme moins de cuisses qu'une
+descente frein\'ee -- sur 2\,800 m de D-, c'est l'\'economie qui fait la fin
+de course.
+\end{minipage}
+\end{center}
+
+% ============================ 6. NUTRITION ============================
+\section{Nutrition et hydratation}\label{sec:nutrition}
+
+\subsection{Au quotidien}
+Alimentation \'equilibr\'ee autour de 3\,000 kcal/jour : 3--4 prises
+(petit-d\'ejeuner, d\'ejeuner, collation, d\^iner), f\'eculents \`a chaque
+repas, 5 fruits et/ou l\'egumes, prot\'eines \`a chaque repas (1,5 g/kg dans
+les semaines charg\'ees), mati\`eres grasses crues (huile de colza, noix,
+olive). Buvez 2 \`a 3 litres d'eau par jour, sans attendre la soif. Dans
+l'aff\^utage (S26+) : privil\'egiez vitamines (C, D, B), min\'eraux (fer,
+magn\'esium) et antioxydants -- fruits frais, ol\'eagineux, complet,
+eaux min\'eralis\'ees.
+
+\subsection{Pendant l'effort}
+\begin{itemize}
+\item Efforts $>$ 1 h 30 : boisson isotonique (elle augmente
+significativement l'endurance) ; sortie $<$ 1 h : eau.
+\item Sorties longues (d\`es S9) : \textbf{60 \`a 90 g de glucides par heure},
+c'est-à-dire gels, p\^ates de fruits, barres coup\'ees en bouch\'ees, quart de
+banane, biscuits sal\'es. \emph{Variez saveurs et textures} : le point de
+non-retour gustatif est la premi\`ere cause d'abandon sur les ultras courts.
+\item 500 \`a 750 ml de boisson par heure ; par chaleur, ajoutez du sel.
+\item R\'ecup\'eration dans les 30' : glucides + prot\'eines (ratio 3:1 ;
+lait chocolat\'e, fromage blanc + miel, repas normal si possible).
+\end{itemize}
+
+\begin{aret}
+\textbf{Chaque sortie longue est une r\'ep\'etition g\'en\'erale du
+ravitaillement.} Testez exactement ce que vous emporterez le 9 mai : marque
+et saveur des gels, syst\`eme d'hydratation (gourdes souples), solide sal\'e
+au ravito. R\`egle d'or le jour J : rien de neuf, jamais. Et testez aussi le
+mat\'eriel : chaussures (une paire rod\'ee de 100--200 km, semelles accrochant
+bien les feuilles mouill\'ees), sac, b\^atons si le r\`eglement les autorise,
+coupe-vent.
+\end{aret}
+
+% ============================ 7. PROGRAMME ============================
+\clearpage
+\section{Le programme semaine par semaine}
+
+Conventions : renforcement le matin (\rma{} le lundi, \rmb{} le jeudi),
+course \`a la pause du midi le mercredi et le vendredi, yoga + natation le
+lundi, v\'elo le samedi ; \sln{} = sortie longue ; les volumes sont
+indicatifs. Les semaines all\'eg\'ees (S4, S8, S12, S16, S20, S24) sont
+partie int\'egrante de la progression : ne les chargez pas.
+
+\begin{landscape}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.32}
+
+\subsection*{\color{acc} Bloc 1 -- Fondation (S1--S6)}
+\begin{tabular}{p{0.95cm}p{1.5cm}p{2.95cm}p{1.3cm}p{3.7cm}p{1.5cm}p{3.5cm}p{2.2cm}p{3.9cm}p{1.15cm}}
+\toprule
+\textbf{Sem.} & \textbf{Dates} & \textbf{Lundi} & \textbf{Mardi} & \textbf{Mercredi} & \textbf{Jeudi} & \textbf{Vendredi} & \textbf{Samedi} & \textbf{Dimanche} & \textbf{Vol.}\\
+\midrule
+S1 & 19/10--25/10 & \rma{} 30' + NAT 40' + yoga & -- & EV 45' (250 m D+) & \rmb{} 25' & EP 45' & V 1h souple & \sln{} 1h15 -- 300 m D+ & 4 h 30\\
+S2 & 26/10--01/11 & \rma{} 30' + NAT 40' + yoga & -- & EV 45' + \gam{} & \rmb{} 25' & EP 45' & V 1h15 & V 1h30 ou CAP 1h & 4 h 30\\
+S3 & 02/11--08/11 & \rma{} 30' + NAT 40' + yoga & -- & EV 50' (300 m D+) & \rmb{} 25' & EP 45' & V 1h15 & \sln{} 1h30 -- 400 m D+ & 5 h\\
+S4 & 09/11--15/11 & \rma{} 25' + NAT 40' + yoga & -- & EV 45' souple & \rmb{} 20' & EP 40' & V 1h & V 1h30 + lignes droites & \textbf{4 h} (all\'eg\'ee)\\
+S5 & 16/11--22/11 & \rma{} 30' + NAT 40' + yoga & -- & EV 50' (300 m D+) + \gam{} & \rmb{} 25' & EP 45' & V 1h30 & \sln{} 2h -- 500 m D+ & 5 h 30\\
+S6 & 23/11--29/11 & \rma{} 30' + NAT 40' + yoga & -- & \sqd{} : fartlek 20' dans EV 50' & \rmb{} 25' & EP 45' & V 1h30 & \sln{} 2h -- 600 m D+ & 6 h\\
+\bottomrule
+\end{tabular}
+\medskip
+
+\subsection*{\color{acc} Bloc 2 -- D\'eveloppement (S7--S14)}
+\begin{tabular}{p{0.95cm}p{1.5cm}p{2.95cm}p{1.3cm}p{3.7cm}p{1.5cm}p{3.5cm}p{2.2cm}p{3.9cm}p{1.15cm}}
+\toprule
+\textbf{Sem.} & \textbf{Dates} & \textbf{Lundi} & \textbf{Mardi} & \textbf{Mercredi} & \textbf{Jeudi} & \textbf{Vendredi} & \textbf{Samedi} & \textbf{Dimanche} & \textbf{Vol.}\\
+\midrule
+S7 & 30/11--06/12 & \rma{} 35' + NAT 40' + yoga & -- & \sqa{} : 2$\times$(8$\times$30''/30'') & \rmb{} 25' & EV 50' + \dtl{} 6$\times$30'' & V 1h30 & \sln{} 2h15 -- 700 m D+ & 6 h 15\\
+S8 & 07/12--13/12 & \rma{} 25' + NAT 40' + yoga & -- & EV 45' souple & \rmb{} 20' & EP 40' & V 1h & V 1h30 & \textbf{4 h 15} (all\'eg\'ee)\\
+S9 & 14/12--20/12 & \rma{} 35' + NAT 40' + yoga & -- & \sqb{} : 8$\times$1' en c\^ote & \rmb{} 25' & EV 50' + \dtl{} 8$\times$30'' & V 1h30 & \sln{} 2h30 -- 900 m D+ & 6 h 30\\
+S10 & 21/12--27/12 & \rma{} 30' + NAT 40' + yoga & -- & \sqc{} : 2$\times$10' seuil (r 3') & \rmb{} 25' & EV 50' + \dtl{} 6$\times$45'' & \rmc{} 20' + V 1h30 & V 1h45 + CAP 30' & 6 h 30 (f\^etes)\\
+S11 & 28/12--03/01 & \rma{} 35' + NAT 40' + yoga & -- & \sqb{} : 6$\times$2' en c\^ote & \rmb{} 25' & EV 50' + \dtl{} 6$\times$45'' & V 1h30 & \sln{} 2h45 -- 1\,000 m D+ & 7 h\\
+S12 & 04/01--10/01 & \rma{} 25' + NAT 40' + yoga & -- & EV 45' souple & \rmb{} 20' & EP 40' & V 1h & CAP 1h souple & \textbf{4 h} (all\'eg\'ee)\\
+S13 & 11/01--17/01 & \rma{} 35' + NAT 40' + yoga & -- & \sqa{} : 12$\times$30''/30'' en c\^ote & \rmb{} 25' & EV 50' + \dtl{} 8$\times$45'' & V 1h45 & \sln{} 3h -- 1\,100 m D+ & 7 h 15\\
+S14 & 18/01--24/01 & \rma{} 30' + NAT 40' + yoga & -- & \sqc{} : 3$\times$10' seuil (r 3') & \rmb{} 25' & EV 50' + \dtl{} 6$\times$45'' & \rmc{} 20' + V 1h45 & V 2h + CAP 30' & 7 h 15\\
+\bottomrule
+\end{tabular}
+\medskip
+
+\subsection*{\color{acc} Bloc 3 -- Sp\'ecifique I (S15--S21)}
+\begin{tabular}{p{0.95cm}p{1.5cm}p{2.95cm}p{1.3cm}p{3.7cm}p{1.5cm}p{3.5cm}p{2.2cm}p{3.9cm}p{1.15cm}}
+\toprule
+\textbf{Sem.} & \textbf{Dates} & \textbf{Lundi} & \textbf{Mardi} & \textbf{Mercredi} & \textbf{Jeudi} & \textbf{Vendredi} & \textbf{Samedi} & \textbf{Dimanche} & \textbf{Vol.}\\
+\midrule
+S15 & 25/01--31/01 & \rma{} 35' + NAT 40' + yoga & -- & \sqb{} : 4$\times$3' en c\^ote & \rmb{} 25' & EV 55' + \dtl{} 6$\times$1' & V 1h45 & \sln{} 3h15 -- 1\,300 m D+ (premier test ravito complet) & 7 h 45\\
+S16 & 01/02--07/02 & \rma{} 25' + NAT 40' + yoga & -- & EV 45' & \rmb{} 20' & EP 40' & V 1h15 & V 1h30 & \textbf{4 h 30} (all\'eg\'ee)\\
+S17 & 08/02--14/02 & \rma{} 35' + NAT 40' + yoga & -- & \sqc{} : 3$\times$12' seuil (r 3') & \rmb{} 25' & EV 55' + \dtl{} 8$\times$1' & V 2h & \sln{} 3h30 -- 1\,500 m D+ & 8 h\\
+S18 & 15/02--21/02 & \rma{} 30' + NAT 40' + yoga & -- & \sqd{} : fartlek vallonn\'e 45' & \rmb{} 25' & EV 55' & V 1h30 & V 1h45 + CAP 45' \`a l'allure \sln{} & 7 h\\
+S19 & 22/02--28/02 & \rma{} 30' + NAT 40' + yoga & -- & \sqb{} : 5$\times$3' en c\^ote + descentes vives & \rmb{} 25' & EV 55' + \dtl{} 10$\times$1' & V 2h & \sln{} 3h45 -- 1\,600 m D+ (ou trail 28--32 km en course) & 8 h 15\\
+S20 & 01/03--07/03 & \rma{} 20' + NAT 40' + yoga & -- & EV 45' & \rmb{} 15' & EP 40' & V 1h & CAP 1h & \textbf{4 h} (all\'eg\'ee)\\
+S21 & 08/03--14/03 & \rma{} 30' + NAT 40' + yoga & -- & \sqc{} : 4$\times$10' seuil (r 3') & \rmb{} 25' & EV 55' + \dtl{} 8$\times$1' & V 2h & \sln{} 4h -- 1\,700 m D+ & 8 h 30\\
+\bottomrule
+\end{tabular}
+\medskip
+
+\subsection*{\color{acc} Bloc 4 -- Pic sp\'ecifique (S22--S25)}
+\begin{tabular}{p{0.95cm}p{1.5cm}p{2.95cm}p{1.3cm}p{3.7cm}p{1.5cm}p{3.5cm}p{2.2cm}p{3.9cm}p{1.15cm}}
+\toprule
+\textbf{Sem.} & \textbf{Dates} & \textbf{Lundi} & \textbf{Mardi} & \textbf{Mercredi} & \textbf{Jeudi} & \textbf{Vendredi} & \textbf{Samedi} & \textbf{Dimanche} & \textbf{Vol.}\\
+\midrule
+S22 & 15/03--21/03 & \rma{} 25' + NAT 40' + yoga & -- & \sqb{} : 6$\times$3' en c\^ote & \rmb{} 20' & EV 55' + \dtl{} 6$\times$1' & V 2h & V 2h + CAP 45' & 7 h 45\\
+S23 & 22/03--28/03 & gainage 20' + NAT 40' + yoga & -- & \sqd{} : fartlek 45' mont\'ees/descentes & \rmb{} 15' & EV 50' & V 1h30 souple & \textbf{\sln{} 4h30 -- 1\,900 m D+} (la plus grosse sortie) & 8 h 45\\
+S24 & 29/03--04/04 & \rma{} 20' + NAT 40' + yoga & -- & EV 45' & \rmb{} 15' & EP 40' & V 1h15 & CAP 1h15 & \textbf{4 h 30} (all\'eg\'ee)\\
+S25 & 05/04--11/04 & \rma{} 20' + NAT 40' + yoga & -- & \sqc{} : 3$\times$10' seuil (r 3') & \rmb{} 15' & EV 55' + \dtl{} 6$\times$1' & V 1h30 & \textbf{\sln{} 3h30 -- 1\,500 m D+ \`a l'allure course}, ravito complet, mat\'eriel de course & 7 h 30\\
+\bottomrule
+\end{tabular}
+\medskip
+
+\subsection*{\color{acc} Bloc 5 -- Aff\^utage (S26--S29)}
+\begin{tabular}{p{0.95cm}p{1.5cm}p{2.95cm}p{1.3cm}p{3.7cm}p{1.5cm}p{3.5cm}p{2.2cm}p{3.9cm}p{1.15cm}}
+\toprule
+\textbf{Sem.} & \textbf{Dates} & \textbf{Lundi} & \textbf{Mardi} & \textbf{Mercredi} & \textbf{Jeudi} & \textbf{Vendredi} & \textbf{Samedi} & \textbf{Dimanche} & \textbf{Vol.}\\
+\midrule
+S26 & 12/04--18/04 & gainage 15' + NAT 40' + yoga & -- & \sqb{} : 5$\times$2' en c\^ote + \dtl{} 6$\times$45'' & \rmb{} 15' & EV 50' + \gam{} & V 1h & V 1h30 + CAP 30' & 5 h\\
+S27 & 19/04--25/04 & gainage 15' + NAT 40' + yoga & -- & \sqc{} : 3$\times$8' seuil (r 3') & \rmb{} 15' & EV 45' + \dtl{} 4$\times$1' & V 1h & \sln{} 2h15 -- 900 m D+ \`a l'allure course & 4 h 30\\
+S28 & 26/04--02/05 & gainage 10' + NAT 30' + yoga & -- & \sqb{} : 6$\times$1' en c\^ote + \dtl{} 3$\times$45'' & \rmb{} 10' & EV 40' & V 45' & CAP 1h dont 3$\times$2' allure course & 2 h 45\\
+S29 & 03/05--09/05 & NAT 20' souple + yoga doux & gainage 10' + proprio & EP 30' + 4 lignes droites & repos & EP 20' + \gam{} & CAP 15' + 2--3 lignes droites & \textbf{COURSE : 72 km, 2\,800 m D+} & $\to$ jour J\\
+\bottomrule
+\end{tabular}
+\end{landscape}
+\normalsize
+
+% ============================ 8. JOUR J ============================
+\clearpage
+\section{Jour J : strat\'egie et d\'eroulement}
+
+\subsection{Semaine de course (S29) et nuit pr\'ec\'edente}
+Repos quasi complet, hydratation normale, alimentation habituelle (pas de
+nouveaut\'e), pas de s\'eance lourde. Le samedi : 15' de footing et 2--3 lignes
+droites pour garder la foul\'ee. La veille au soir : d\^iner riche en
+f\'eculents, rien de lourd ; couchez-vous t\^ot. Pr\'eparez le sac la veille
+(check-list ci-dessous).
+
+\subsection{Gestion de la course}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\key{Barri\`eres} & moyennes de 6,2 km/h : visez 30' d'avance \`a mi-course. Ne courez jamais \emph{pour} la barri\`ere, courez votre plan.\\
+\key{Allure} & roulant : 70--75 \% FCM ; mont\'ees raides : marche rapide en puissance, 75--80 \% FCM (c'est votre force : vous y gagnez du temps sur la majorit\'e du peloton) ; descentes : rel\^ach\'ees, pas courts, regard loin (section \ref{sec:prevention}).\\
+\key{Ravitaillement} & 60--90 g de glucides par heure d\`es le d\'epart, 500--750 ml/h, solide sal\'e \`a chaque ravito. \`A tenir m\^eme quand \c{c}a va bien : la faim se d\'eclare vers le km 45.\\
+\key{Mental} & segmentez : 12 forts = 12 victoires interm\'ediaires. Mantras pr\'epar\'es \`a l'entra\^inement (\emph{chaque pas me rapproche de la Citadelle}). Aux moments durs : respirez profond, souvenez-vous de la S23.\\
+\key{Mat\'eriel} & test\'e en S25 -- rien de neuf le jour J. Veste coupe-vent (d\'epart matinal en mai), cr\`eme anti-frottement, b\^atons si autoris\'es par le r\`eglement, t\'el\'ephone, carte des barri\`eres.\\
+\key{Cheville} & strapping pr\'eventif si votre kin\'e l'a valid\'e ; \'echauffement proprio 2' sur une jambe avant le d\'epart.\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Check-list}
+\begin{multicols}{2}
+\begin{itemize}[leftmargin=1.2em]
+\item dossard + puce + certificat m\'edical
+\item 2 gourdes souples test\'ees
+\item gels / p\^ates de fruits habituels (dose horaire pr\'epar\'ee)
+\item barres + biscuits sal\'es
+\item sac rod\'e (poids course)
+\item chaussures rod\'ees, semelles accrochant les feuilles mouill\'ees
+\item veste coupe-vent + gants fins
+\item b\^atons (si autoris\'es)
+\item t\'el\'ephone + batterie externe
+\item cr\`eme anti-frottement + pansements
+\item serviette + change pour l'arriv\'ee
+\item carte des barri\`eres horaires + plan ravitos
+\end{itemize}
+\end{multicols}
+
+% ============================ 9. SUIVI ============================
+\section{Suivi et ajustements}
+
+\textbf{Journal hebdomadaire} (5 min le dimanche soir) : volume r\'eel,
+sensations (/10), douleur essuie-glace (/10), douleur cheville (/10), sommeil.
+Ce journal est votre tableau de bord : si la douleur grimpe pendant deux
+semaines cons\'ecutives, c'est le signal d'une semaine all\'eg\'ee suppl\'ementaire.
+
+\textbf{Semaine impossible} (travail, famille, maladie) :
+la priorit\'e des s\'eances est \emph{1) la sortie longue, 2) la s\'eance
+qualit\'e du mercredi, 3) le renforcement \rmb{}, 4) le reste}. On ne rattrape
+jamais une s\'eance manquante -- on la saute. Apr\`es 3 jours de maladie ou
+plus : reprenez avec une semaine all\'eg\'ee.
+
+\textbf{Indicateurs de r\'eussite} avant le d\'epart :
+\begin{itemize}
+\item la \sln{} de S25 (3 h 30 \`a allure course) termin\'ee avec le sourire et
+les jambes ;
+\item aucune douleur essuie-glace $>$ 2/10 dans le bloc 4 ;
+\item 60--90 g de glucides/heure aval\'es sans d\'ego\^ut sur les trois
+derni\`eres sorties longues ;
+\item l'envie d'y \^etre d\'ej\`a.
+\end{itemize}
+
+\vfill
+\begin{center}\footnotesize\color{grey1}
+Programme du 19/10/2026 au 09/05/2027, mis \`a jour le 27 octobre 2026.
+Ajustez avec bon sens : la mieux suivie des pr\'eparations bat la mieux \'ecrite.
+\end{center}
+
+\end{document}
