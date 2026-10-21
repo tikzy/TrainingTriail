@@ -49,7 +49,7 @@ ou une application GPS si l'enregistrement direct n'est pas pratique.
   séances cochées, dernières sorties, douleurs, chaussures) et répond en tenant
   compte du programme. Activer dans **Réglages** avec une clé API Mistral
   (console.mistral.com — l'offre gratuite suffit) ; la clé reste dans le navigateur
-  et n'est envoyée qu'à api.mistral.com.
+  et n'est envoyée qu'à api.mistral.ai.
 - **Réglages** : décalage de la date de début, clé API Mistral + modèle, export/import
   JSON de sauvegarde.
 
