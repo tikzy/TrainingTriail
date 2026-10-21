@@ -94,6 +94,7 @@ h4 { margin: 0 0 4px; }
 }
 .c-run { background: #143a4d; color: #6fd0f0; }
 .c-str { background: #332413; color: #eebb66; }
+.c-corde { background: #3a241d; color: #e8a06a; }
 .c-bike { background: #1d3347; color: #7db4e8; }
 .c-swim { background: #10333a; color: #5fd3c8; }
 .c-yoga { background: #2c2140; color: #b79ae8; }
@@ -157,18 +158,39 @@ h4 { margin: 0 0 4px; }
 .block-card { border-left: 4px solid var(--c); background: var(--card); padding: 8px 12px; border-radius: 8px; font-size: 13.5px; }
 
 /* ---------- exercices ---------- */
-.exo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.exo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
 .exo-card {
-  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-  padding: 12px; display: flex; gap: 12px; align-items: center;
+  background: linear-gradient(180deg, var(--card), #141f38);
+  border: 1px solid var(--line); border-radius: 14px;
+  display: flex; flex-direction: column; overflow: hidden;
+  transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
 }
-.exo-card .exfig { width: 110px; flex-shrink: 0; background: #0d1626; border-radius: 10px; }
+.exo-card:hover { transform: translateY(-3px); border-color: var(--acc); box-shadow: 0 8px 20px rgba(0,0,0,.35); }
+.exo-card .exo-fig {
+  position: relative; background: radial-gradient(circle at 50% 38%, #152447, #0d1626);
+  padding: 6px 6px 2px; border-bottom: 1px solid var(--line);
+}
+.exo-card .exfig { width: 100%; height: 150px; }
+.exo-num {
+  position: absolute; top: 8px; left: 8px; background: var(--acc); color: #fff;
+  font-size: 11px; font-weight: 700; border-radius: 50%; width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+}
+.exo-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .exo-body h4 { font-size: 15px; }
-.muscles { color: var(--muted); font-size: 12px; font-style: italic; margin-bottom: 6px; }
-.sets { font-size: 12.5px; color: #c7d4e6; margin-bottom: 10px; }
+.exo-body .btn { margin-top: auto; }
+.exo-desc { font-size: 12.5px; color: #c7d4e6; margin: 0; line-height: 1.45; }
+.muscles { color: var(--teal); font-size: 12px; font-style: italic; margin-bottom: 4px; }
+.sets { font-size: 12.5px; color: #c7d4e6; margin-bottom: 4px; }
 .exo-detail { display: flex; gap: 16px; align-items: flex-start; }
-.exo-detail .exfig { width: 170px; background: #0d1626; border-radius: 12px; flex-shrink: 0; }
+.exo-detail .exfig { width: 190px; background: radial-gradient(circle at 50% 38%, #152447, #0d1626); border-radius: 12px; flex-shrink: 0; }
 .exo-detail-txt p { margin: 6px 0; line-height: 1.45; }
+.exo-steps { margin: 8px 0; padding-left: 20px; color: #c7d4e6; font-size: 13px; line-height: 1.55; }
+.exo-steps li { margin-bottom: 3px; }
+.exo-mistakes {
+  font-size: 12.5px; color: #e8c56a; background: rgba(217,160,63,.09);
+  border-left: 3px solid var(--warn); border-radius: 6px; padding: 7px 9px; margin: 8px 0; line-height: 1.5;
+}
 
 /* figures SVG */
 .exfig .limb { stroke: #e8edf5; stroke-width: 5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
@@ -307,6 +329,7 @@ label.full { display: flex; flex-direction: column; font-size: 12px; color: var(
 .coach-sugg { margin: 8px 0 0; gap: 6px; }
 
 footer#foot { text-align: center; color: var(--muted); font-size: 11.5px; padding: 24px 12px; }
+#save-stamp { color: var(--teal); font-weight: 600; margin-top: 5px; font-size: 11.5px; }
 
 @media (max-width: 700px) {
   .topstats { display: none; }

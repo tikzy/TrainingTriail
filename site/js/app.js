@@ -8,13 +8,39 @@ let state = {
   done: {},       // clé "w-d-i" -> true
   runs: [],       // sorties réelles + feedback
   shoes: [],
+  lastShoeId: null,
   seq: 1,
   lastWeekView: null,
   mistral: { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" },
   chat: []        // conversation coach : [{role, content}]
 };
 
-function save() { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+let storageWarned = false;
+function save() {
+  const write = () => localStorage.setItem(LS_KEY, JSON.stringify(state));
+  try { write(); }
+  catch (e) {
+    // quota dépassé : compacter d'abord les traces GPS, puis les supprimer en dernier recours
+    try {
+      state.runs.forEach(r => { if (r.points && r.points.length) r.points = Geo.compact(r.points, 1200); });
+      write();
+    } catch (e2) {
+      const withPts = state.runs.slice().sort((a, b) => a.id - b.id).filter(r => r.points);
+      let ok = false;
+      for (const r of withPts) { r.points = null; try { write(); ok = true; break; } catch (e3) {} }
+      if (!ok && !storageWarned) {
+        storageWarned = true;
+        toast("Sauvegarde impossible : stockage du navigateur plein. Exporte tes données (Réglages) puis supprime d'anciennes sorties.");
+      }
+      if (!ok) console.error("Échec de la sauvegarde localStorage", e);
+    }
+  }
+  updateSaveStamp();
+}
+function updateSaveStamp() {
+  const el = $("#save-stamp");
+  if (el) el.textContent = "Enregistré à " + new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
 function load() {
   try { const raw = localStorage.getItem(LS_KEY); if (raw) Object.assign(state, JSON.parse(raw)); }
   catch (e) { console.warn("Lecture localStorage impossible", e); }
@@ -24,6 +50,7 @@ function normalizeState() {
   if (!state.done) state.done = {};
   if (!state.runs) state.runs = [];
   if (!state.shoes) state.shoes = [];
+  if (state.lastShoeId == null) state.lastShoeId = null;
   if (!state.mistral) state.mistral = { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" };
   if (!state.chat) state.chat = [];
 }
@@ -71,7 +98,7 @@ function toast(msg) {
 }
 function typeChip(code) {
   const ty = TYPES[code]; if (!ty) return "";
-  const kindCls = { run: "c-run", strength: "c-str", bike: "c-bike", swim: "c-swim", yoga: "c-yoga", recovery: "c-rec", rest: "c-rest" }[ty.kind] || "";
+  const kindCls = { run: "c-run", strength: "c-str", jump: "c-corde", bike: "c-bike", swim: "c-swim", yoga: "c-yoga", recovery: "c-rec", rest: "c-rest" }[ty.kind] || "";
   return '<span class="chip ' + kindCls + '">' + esc(ty.label) + "</span>";
 }
 function itemKey(w, d, i) { return w + "-" + d + "-" + i; }
@@ -136,7 +163,7 @@ function itemHTML(w, d, i, it, opts) {
   const done = isDone(w, d, i);
   const ty = TYPES[it.c] || {};
   const isRun = RUN_CODES.includes(it.c);
-  const routineKey = { RMA: "A", RMB: "B", RMC: "C", GAING: "G" }[it.c];
+  const routineKey = { RMA: "A", RMB: "B", RMC: "C", GAING: "G", CORDE: "S" }[it.c];
   const attrs = [];
   if (it.dplus) attrs.push(it.dplus + " m D+");
   return '<div class="item ' + (done ? "done" : "") + '" data-key="' + key + '">' +
@@ -183,10 +210,14 @@ function openInfo(code) {
     const list = EXERCISES.filter(x => x.routine === code.slice(-1));
     body += "<p class='muted'>Exercices : " + list.map(x => esc(x.name)).join(" · ") + "</p>";
   }
+  if (code === "CORDE") {
+    const list = EXERCISES.filter(x => x.routine === "S");
+    body += "<p class='muted'>Exercices : " + list.map(x => esc(x.name)).join(" · ") + "</p>";
+  }
   body += '<div class="row-actions"><button class="btn" id="info-start">Lancer la séance</button></div>';
   $("#info-body").innerHTML = body;
   $("#info-modal").classList.remove("hidden");
-  const rk = { RMA: "A", RMB: "B", RMC: "C", GAING: "G" }[code];
+  const rk = { RMA: "A", RMB: "B", RMC: "C", GAING: "G", CORDE: "S" }[code];
   const st = $("#info-start");
   if (rk) st.addEventListener("click", () => { $("#info-modal").classList.add("hidden"); startRoutine(rk); });
   else st.style.display = "none";
@@ -220,6 +251,7 @@ function renderToday() {
     '<button class="btn" data-routine="A">RM-A · Jambes & chaîne post. (30-35\')</button>' +
     '<button class="btn" data-routine="B">RM-B · Tronc, fessiers & cheville (25-30\')</button>' +
     '<button class="btn" data-routine="C">RM-C · Pliométrie (20\')</button>' +
+    '<button class="btn" data-routine="S">Corde à sauter (10-15\')</button>' +
     '<button class="btn" data-routine="G">Gainage léger</button></div>' +
     '<div class="muted small" style="margin-top:-6px">La séance se déroule exercice par exercice : tu coches chaque série faite, puis le site coche la bonne case du programme (premier créneau libre de la semaine — pratique pour décaler une séance).</div>';
 
@@ -308,19 +340,27 @@ function renderProgram() {
 
 /* ================= vue : exercices ================= */
 function renderExercises() {
+  const sections = [
+    { r: "A", title: "RM-A — Jambes et chaîne postérieure (lundi matin, 30-35')",
+      subtitle: "Fais chaque répétition lentement : quelques répétitions propres valent mieux qu'une série bâclée. Lestez en bloc 2 quand 20 répétitions sont faciles." },
+    { r: "B", title: "RM-B — Tronc, fessiers et cheville (jeudi matin, 25-30')",
+      subtitle: "La routine anti-essuie-glace et anti-entorse. À faire deux fois par semaine, sans exception, toute l'année." },
+    { r: "S", title: "Corde à sauter — pliométrie douce, cheville et coordination (10-15')",
+      subtitle: "Règle ta corde : poignées à hauteur d'aisselles en marchant sur le milieu de la corde. Sur sol souple, toujours sur l'avant-pied, genoux souples." }
+  ];
   let html = "";
-  ["A", "B"].forEach(r => {
-    const list = EXERCISES.filter(e => e.routine === r);
-    const title = r === "A" ? "RM-A — Jambes et chaîne postérieure (lundi matin, 30-35')" : "RM-B — Tronc, fessiers et cheville (jeudi matin, 25-30')";
-    const subtitle = r === "A" ? "Faites chaque répétition lentement : quelques répétitions propres valent mieux qu'une série bâclée. Lestez en bloc 2 quand 20 répétitions sont faciles."
-                              : "La routine anti-essuie-glace et anti-entorse. À faire deux fois par semaine, sans exception, toute l'année.";
-    html += '<h3>' + esc(title) + '</h3><div class="muted sub">' + esc(subtitle) + "</div>";
+  sections.forEach(sec => {
+    const list = EXERCISES.filter(e => e.routine === sec.r);
+    html += '<h3>' + esc(sec.title) + '</h3><div class="muted sub">' + esc(sec.subtitle) + "</div>";
+    html += '<div class="row-actions"><button class="btn" data-routine="' + sec.r + '">Lancer la séance guidée</button></div>';
     html += '<div class="exo-grid">';
-    list.forEach(ex => {
-      html += '<div class="exo-card">' + figureHTML(ex.id) +
+    list.forEach((ex, i) => {
+      html += '<div class="exo-card">' +
+        '<div class="exo-fig"><span class="exo-num">' + (i + 1) + "</span>" + figureHTML(ex.id) + "</div>" +
         '<div class="exo-body"><h4>' + esc(ex.name) + "</h4>" +
         '<div class="muscles">' + esc(ex.muscles) + "</div>" +
         '<div class="sets">' + esc(ex.sets) + "</div>" +
+        '<p class="exo-desc">' + esc(ex.desc) + "</p>" +
         '<button class="btn primary" data-exo="' + ex.id + '">Ouvrir + minuteur</button></div></div>';
     });
     html += "</div>";
@@ -353,6 +393,8 @@ function renderExoModal() {
     '<div class="exo-detail">' + figureHTML(ex.id) +
     '<div class="exo-detail-txt"><div class="muscles">' + esc(ex.muscles) + "</div>" +
     "<p>" + esc(ex.desc) + "</p>" +
+    (ex.steps ? "<ol class='exo-steps'>" + ex.steps.map(s => "<li>" + esc(s) + "</li>").join("") + "</ol>" : "") +
+    (ex.mistakes ? "<p class='exo-mistakes'><b>Erreurs à éviter :</b> " + ex.mistakes.map(esc).join(" · ") + "</p>" : "") +
     "<p><b>Prescription : " + esc(ex.sets) + "</b></p>" +
     (ex.tip ? "<p class='tip'>" + esc(ex.tip) + "</p>" : "") +
     '<button class="btn primary" id="exo-timer">Lancer le minuteur</button></div></div>';
@@ -390,7 +432,7 @@ function playerStep() {
   const st = r.steps[Player.pos];
   if (st.ex) {
     const ex = EXERCISES.find(e => e.id === st.ex);
-    return { name: ex.name, muscles: ex.muscles, sets: st.alt || ex.sets, desc: ex.desc, tip: ex.tip, fig: ex.id, timer: ex.timer, series: (ex.timer && ex.timer.sets) || 3 };
+    return { name: ex.name, muscles: ex.muscles, sets: st.alt || ex.sets, desc: ex.desc, steps: ex.steps, tip: ex.tip, fig: ex.id, timer: ex.timer, series: (ex.timer && ex.timer.sets) || 3 };
   }
   return { name: st.name, sets: st.txt, desc: st.desc || "", tip: "", fig: null, timer: st.timer, series: st.series || 1 };
 }
@@ -408,6 +450,7 @@ function paintPlayerStep(finished) {
     (s.muscles ? '<div class="muscles">' + esc(s.muscles) + "</div>" : "") +
     "<p><b>" + esc(s.sets) + "</b></p>" +
     (s.desc ? "<p>" + esc(s.desc) + "</p>" : "") +
+    (s.steps ? "<ol class='exo-steps'>" + s.steps.map(x => "<li>" + esc(x) + "</li>").join("") + "</ol>" : "") +
     (s.tip ? '<p class="tip">' + esc(s.tip) + "</p>" : "") +
     (finished ? '<p class="ok-msg">Exercice terminé — passe au suivant.</p>' : "") +
     "</div></div>";
@@ -487,10 +530,11 @@ function openTimer(label, cfg) {
   Timer.run = false; Timer.phase = "idle"; Timer.set = 1; Timer.rep = 1; Timer.repsModeSet = 1;
   Timer.label = label;
   $("#timer-title").textContent = label;
-  const show = id => ["cfg-work", "cfg-rest", "cfg-reps", "cfg-sets", "cfg-setrest"].map(s => $("#cfg-" + s).parentElement).forEach(l => l.style.display = id ? "" : "none");
+  const show = id => ["work", "rest", "reps", "sets", "setrest"].map(s => $("#cfg-" + s).parentElement).forEach(l => l.style.display = id ? "" : "none");
   if (Timer.mode === "interval") show(true);
   else if (Timer.mode === "hold") { show(true); }
   else show(false); // reps : pas de config, bouton "série faite"
+  $("#timer-startstop").style.display = Timer.mode === "reps" ? "none" : "";
   $("#cfg-work").value = Timer.cfg.work;
   $("#cfg-rest").value = Timer.cfg.rest;
   $("#cfg-reps").value = Timer.cfg.reps;
@@ -513,6 +557,8 @@ function startPhase(phase, secs) {
   Timer.phase = phase;
   Timer.remain = secs;
   Timer.endAt = Date.now() + secs * 1000;
+  Timer.run = true;
+  $("#timer-startstop").textContent = "Pause";
   if (!Timer.iv) Timer.iv = setInterval(tickTimer, 200);
   beep(phase === "work" ? 880 : 440, 0.18);
   paintTimerPhase();
@@ -546,6 +592,8 @@ function nextPhase() {
 }
 function finishTimer() {
   stopTimer();
+  Timer.phase = "over";
+  $("#timer-startstop").textContent = "Démarrer";
   beep(1320, 0.4); setTimeout(() => beep(1320, 0.4), 450); setTimeout(() => beep(1760, 0.6), 900);
   $("#timer-phase").textContent = "Terminé — bien joué !";
 }
@@ -669,8 +717,9 @@ function renderRuns() {
     '<label>Distance (km) <input type="number" id="rf-dist" step="0.01" min="0"></label>' +
     '<label>Durée (min) <input type="number" id="rf-dur" step="1" min="0"></label>' +
     '<label>D+ (m) <input type="number" id="rf-dplus" step="1" min="0"></label>' +
-    '<label>Chaussures <select id="rf-shoe"><option value="">—</option>' +
-      state.shoes.filter(s => !s.retired).map(s => '<option value="' + s.id + '">' + esc(s.name) + "</option>").join("") + "</select></label>" +
+    '<label>Chaussures <select id="rf-shoe"><option value="">— sélectionner —</option>' +
+      state.shoes.filter(s => !s.retired).map(s => '<option value="' + s.id + '"' +
+        (state.lastShoeId === s.id ? " selected" : "") + '>' + esc(s.name) + "</option>").join("") + "</select></label>" +
     '<label>Sensations (/10) <input type="number" id="rf-feel" min="1" max="10" placeholder="1-10"></label>' +
     '<label>Douleur essuie-glace (/10) <input type="number" id="rf-knee" min="0" max="10" placeholder="0-10"></label>' +
     '<label>Douleur cheville (/10) <input type="number" id="rf-ankle" min="0" max="10" placeholder="0-10"></label>' +
@@ -711,7 +760,7 @@ function runCardHTML(r) {
     stat(r.knee != null ? r.knee + "/10" : "—", "essuie-glace") +
     stat(r.ankle != null ? r.ankle + "/10" : "—", "cheville") +
     "</div>" +
-    (shoe ? '<div class="muted small">Chaussures : ' + esc(shoe.name) + "</div>" : "") +
+    (shoe ? '<div class="muted small">Chaussures : ' + esc(shoe.name) + " · cumul " + shoeKm(shoe).toFixed(1).replace(".", ",") + " km</div>" : "") +
     (r.notes ? '<div class="run-notes">' + esc(r.notes) + "</div>" : "") +
     (r.points && r.points.length > 1 ? Geo.profileSVG(r.points) : "") +
     '<div class="row-actions">' +
@@ -752,7 +801,7 @@ function bindRunsEvents(sorted) {
           id: state.seq++, date: isoDate(new Date()), code: "AUTRE",
           dist: Math.round(s.dist * 100) / 100, dur: Math.round(s.dur / 60),
           dplus: s.dplus, feel: null, knee: null, ankle: null, notes: "Import GPX : " + f.name,
-          shoeId: null, points: pts, planned: null
+          shoeId: null, points: Geo.compact(pts, 1200), planned: null
         };
         state.runs.push(run); save();
         toast("GPX importé : " + s.dist.toFixed(1) + " km, " + s.dplus + " m D+");
@@ -799,7 +848,7 @@ function startRecording() {
 }
 
 function stopRecording() {
-  const pts = Recorder.stop();
+  const pts = Geo.compact(Recorder.stop(), 1200);
   clearInterval(recTimerIv);
   $("#rec-start").disabled = false;
   $("#rec-stop").disabled = true;
@@ -812,7 +861,8 @@ function stopRecording() {
   $("#rf-dplus").value = s.dplus;
   $("#rf-points").value = "captured";
   pendingPoints = pts;
-  toast("Trace enregistrée (" + s.dist.toFixed(1) + " km, " + s.dplus + " m D+). Complète le feedback.");
+  $("#rf-shoe").focus();
+  toast("Trace enregistrée (" + s.dist.toFixed(1) + " km, " + s.dplus + " m D+). Choisis la paire de chaussures puis valide la sortie.");
 }
 
 function cancelRecording() {
@@ -882,6 +932,15 @@ function saveRunFromForm() {
   if (!dist && !dur && !(pendingPoints && pendingPoints.length > 1)) {
     toast("Indique au moins une distance ou une durée."); return;
   }
+  const shoeId = $("#rf-shoe").value ? +$("#rf-shoe").value : null;
+  if (!shoeId) {
+    if (state.shoes.some(s => !s.retired)) {
+      toast("Sélectionne la paire de chaussures utilisée — le cumul de km sera mis à jour.");
+      $("#rf-shoe").focus();
+      return;
+    }
+    toast("Astuce : ajoute tes paires dans l'onglet Chaussures pour suivre leur usure.");
+  }
   const w = weekOfDate(date);
   const dayItems = WEEKS[w - 1].days[dayIndexOfDate(date)];
   const plannedRun = dayItems.find(it => RUN_CODES.includes(it.c) && it.c !== "GAM" && it.c !== "LD");
@@ -895,16 +954,27 @@ function saveRunFromForm() {
     knee: $("#rf-knee").value !== "" && $("#rf-knee").value != null ? +$("#rf-knee").value : null,
     ankle: $("#rf-ankle").value !== "" && $("#rf-ankle").value != null ? +$("#rf-ankle").value : null,
     notes: $("#rf-notes").value.trim(),
-    shoeId: $("#rf-shoe").value ? +$("#rf-shoe").value : null,
+    shoeId,
     points: (pendingPoints && pendingPoints.length > 1) ? pendingPoints : null,
     planned: plannedRun ? plannedRun.t : null
   };
   state.runs.push(run);
+  state.lastShoeId = shoeId;
   save();
   pendingPoints = null;
   ["#rf-dist", "#rf-dur", "#rf-dplus", "#rf-feel", "#rf-knee", "#rf-ankle", "#rf-notes"].forEach(s => $(s).value = "");
-  toast("Sortie enregistrée. Bien joué !");
+  if (shoeId) {
+    const shoe = state.shoes.find(s => s.id === shoeId);
+    if (shoe) {
+      const km = shoeKm(shoe);
+      const pct = Math.min(100, Math.round(100 * km / shoe.maxKm));
+      toast("Sortie enregistrée — " + shoe.name + " : " + km.toFixed(1).replace(".", ",") + " km cumulés (" + pct + " % de sa vie estimée).");
+    } else toast("Sortie enregistrée. Bien joué !");
+  } else toast("Sortie enregistrée. Bien joué !");
   renderRuns();
+}
+function shoeKm(shoe) {
+  return state.runs.filter(r => r.shoeId === shoe.id).reduce((a, r) => a + (r.dist || 0), 0);
 }
 
 /* ================= vue : chaussures ================= */
@@ -1164,7 +1234,20 @@ function renderSettings() {
     '<label class="btn file-btn">Importer des données (JSON) <input type="file" id="st-import" accept=".json"></label>' +
     '<button class="btn danger" id="st-reset">Tout effacer</button></div>' +
     '<div class="note">Les données (séances cochées, sorties, GPS, chaussures, conversation, clé API) sont stockées uniquement dans ce navigateur. ' +
-    "Pense à exporter régulièrement une sauvegarde.</div>";
+    "Pense à exporter régulièrement une sauvegarde.</div>" +
+    "<h3>Synchronisation des cochages entre appareils</h3>" +
+    '<div class="muted small">Le code ci-dessous contient uniquement les séances cochées (pas les sorties GPS, ni la clé API). ' +
+    "Envoie-le à ton autre appareil (message, e-mail, fichier) : à l'import, les cochages sont <b>fusionnés</b> — rien n'est effacé, sur aucun des deux appareils.</div>" +
+    '<label class="full">Code de synchronisation <textarea id="sy-code" rows="3" readonly placeholder="Clique sur « Générer le code »…"></textarea></label>' +
+    '<div class="row-actions"><button class="btn" id="sy-gen">Générer le code</button>' +
+    '<button class="btn" id="sy-copy">Copier le code</button>' +
+    '<button class="btn" id="sy-copylink">Copier un lien de synchronisation</button>' +
+    '<button class="btn" id="sy-file">Télécharger le fichier de cochages</button></div>' +
+    '<label class="full">Code reçu d\'un autre appareil — colle-le ici <textarea id="sy-in" rows="3" placeholder="Colle le code, ou ouvre le fichier .txt reçu…"></textarea></label>' +
+    '<div class="row-actions"><button class="btn primary" id="sy-import">Fusionner les cochages</button>' +
+    '<label class="btn file-btn">Ouvrir un fichier de cochages <input type="file" id="sy-infile" accept=".txt,.json"></label></div>' +
+    '<div class="muted small">Astuce : le lien de synchronisation s\'ouvre directement sur l\'autre appareil et propose la fusion automatique. ' +
+    "Pour les sorties GPS et les chaussures, utilise plutôt l'export JSON complet ci-dessus (qui remplace tout).</div>";
 
   $("#st-save").addEventListener("click", () => {
     state.start = $("#st-start").value || DEFAULT_START;
@@ -1200,11 +1283,106 @@ function renderSettings() {
   $("#st-reset").addEventListener("click", () => {
     if (!confirm("Effacer toutes les données (séances cochées, sorties, chaussures, conversation) ? Action irréversible.")) return;
     const keep = state.mistral; // on garde la clé API
-    state = { start: DEFAULT_START, done: {}, runs: [], shoes: [], seq: 1, lastWeekView: null, mistral: keep, chat: [] };
+    state = { start: DEFAULT_START, done: {}, runs: [], shoes: [], lastShoeId: null, seq: 1, lastWeekView: null, mistral: keep, chat: [] };
     save(); toast("Données effacées."); renderSettings(); updateHeader();
   });
+
+  /* ---- synchronisation des cochages entre appareils ---- */
+  const genCode = () => { $("#sy-code").value = buildSyncCode(); toast("Code généré (" + $("#sy-code").value.length + " caractères) — copie-le ou envoie le fichier."); };
+  $("#sy-gen").addEventListener("click", genCode);
+  $("#sy-copy").addEventListener("click", () => copyText($("#sy-code").value || buildSyncCode(), "Code copié — colle-le sur l'autre appareil (Réglages → Fusionner)."));
+  $("#sy-copylink").addEventListener("click", () => {
+    const code = $("#sy-code").value || buildSyncCode();
+    const url = location.href.split("#")[0] + "#sync=" + code;
+    if (url.length > 2000) { toast("Trop de cochages pour un lien — utilise plutôt le fichier .txt."); return; }
+    copyText(url, "Lien copié — ouvre-le sur l'autre appareil (même adresse du site).");
+  });
+  $("#sy-file").addEventListener("click", () => {
+    Geo.download("cochages-" + isoDate(new Date()) + ".txt", $("#sy-code").value || buildSyncCode(), "text/plain");
+  });
+  const importCode = code => {
+    try {
+      const r = applySyncCode(code);
+      const startWarn = r.start && r.start !== state.start
+        ? " Attention : date de début différente (" + r.start + " sur l'autre appareil) — vérifie les dates dans Réglages."
+        : "";
+      if (r.added === 0) toast("Rien de nouveau à fusionner — cet appareil est déjà à jour (" + r.total + " cochages dans le code)." + startWarn);
+      else toast("Fusion terminée : +" + r.added + " cochages (code du " + r.date + ")." + startWarn);
+      updateHeader(); renderToday();
+      if ($("#view-program").classList.contains("active")) renderProgram();
+    } catch (err) { toast("Import impossible : " + err.message); }
+  };
+  $("#sy-import").addEventListener("click", () => {
+    const code = $("#sy-in").value.trim();
+    if (!code) { toast("Colle d'abord le code de synchronisation."); return; }
+    importCode(code);
+  });
+  $("#sy-infile").addEventListener("change", async e => {
+    try { importCode((await e.target.files[0].text()).trim()); }
+    catch (err) { toast("Fichier illisible."); }
+    e.target.value = "";
+  });
+}
+
+/* ================= synchronisation des cochages (fusion, sans compte) ================= */
+function buildSyncCode() {
+  const payload = { v: 1, type: "cochages", date: isoDate(new Date()), start: state.start, done: state.done };
+  // base64 URL-sûr (transférable dans un lien ou un message sans encodage des + /)
+  return btoa(JSON.stringify(payload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function applySyncCode(code) {
+  code = String(code || "").trim();
+  if (!code) throw new Error("code vide");
+  let payload = null;
+  try { payload = JSON.parse(code); } catch (e) { /* pas du JSON brut : on tente le base64 */ }
+  if (!payload) {
+    try {
+      let b = code.replace(/-/g, "+").replace(/_/g, "/");
+      while (b.length % 4) b += "=";
+      payload = JSON.parse(atob(b));
+    } catch (e) { throw new Error("code illisible ou incomplet"); }
+  }
+  if (!payload || payload.type !== "cochages" || !payload.done || typeof payload.done !== "object")
+    throw new Error("ce code n'est pas un code de cochages TrainingTrail");
+  let added = 0;
+  const valid = /^\d+-\d+-\d+$/;
+  Object.keys(payload.done).forEach(k => {
+    if (valid.test(k) && !state.done[k]) { state.done[k] = true; added++; }
+  });
+  save();
+  return { added, total: Object.keys(payload.done).length, date: payload.date || "?", start: payload.start || null };
+}
+function importFromHash() {
+  const m = location.hash.match(/#sync=([A-Za-z0-9_-]+)/);
+  if (!m) return;
+  try {
+    const r = applySyncCode(m[1]);
+    history.replaceState(null, "", location.pathname + location.search);
+    const startWarn = r.start && r.start !== state.start
+      ? " Attention : date de début différente (" + r.start + ") — vérifie dans Réglages."
+      : "";
+    if (r.added === 0) toast("Lien de synchronisation : rien de nouveau à fusionner." + startWarn);
+    else toast("Cochages importés depuis le lien : +" + r.added + " (code du " + r.date + ")." + startWarn);
+    updateHeader(); renderToday();
+    if ($("#view-program").classList.contains("active")) renderProgram();
+  } catch (e) {
+    toast("Lien de synchronisation invalide.");
+  }
+}
+function copyText(txt, msg) {
+  const ok = () => toast(msg || "Copié.");
+  const fallback = () => {
+    const ta = document.createElement("textarea");
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); ok(); } catch (e) { toast("Copie impossible — sélectionne le texte manuellement."); }
+    ta.remove();
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(ok, fallback);
+  else fallback();
 }
 
 /* ================= démarrage ================= */
 renderToday();
 updateHeader();
+importFromHash();
