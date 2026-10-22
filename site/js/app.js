@@ -17,6 +17,7 @@ let state = {
 
 let storageWarned = false;
 function save() {
+  state.updatedAt = Date.now();
   const write = () => localStorage.setItem(LS_KEY, JSON.stringify(state));
   try { write(); }
   catch (e) {
@@ -35,6 +36,7 @@ function save() {
       if (!ok) console.error("Échec de la sauvegarde localStorage", e);
     }
   }
+  ServerSync.push();
   updateSaveStamp();
 }
 function updateSaveStamp() {
@@ -720,6 +722,8 @@ function renderRuns() {
     '<label>Chaussures <select id="rf-shoe"><option value="">— sélectionner —</option>' +
       state.shoes.filter(s => !s.retired).map(s => '<option value="' + s.id + '"' +
         (state.lastShoeId === s.id ? " selected" : "") + '>' + esc(s.name) + "</option>").join("") + "</select></label>" +
+    '<label>Type de route <select id="rf-route"><option value="">—</option>' +
+      ROUTES.map(r => '<option value="' + r.id + '">' + esc(r.label) + "</option>").join("") + "</select></label>" +
     '<label>Sensations (/10) <input type="number" id="rf-feel" min="1" max="10" placeholder="1-10"></label>' +
     '<label>Douleur essuie-glace (/10) <input type="number" id="rf-knee" min="0" max="10" placeholder="0-10"></label>' +
     '<label>Douleur cheville (/10) <input type="number" id="rf-ankle" min="0" max="10" placeholder="0-10"></label>' +
@@ -756,6 +760,7 @@ function runCardHTML(r) {
     stat(r.dplus + " m", "D+") +
     stat(r.dist && r.dur ? (r.dist / (r.dur / 60)).toFixed(1).replace(".", ",") + " km/h" : "—", "vitesse moy.") +
     stat(pace ? Math.floor(pace) + "'" + String(Math.round((pace % 1) * 60)).padStart(2, "0") + '"/km' : "—", "allure") +
+    stat(r.route ? esc(routeLabel(r.route)) : "—", "type de route") +
     stat(r.feel ? r.feel + "/10" : "—", "sensations") +
     stat(r.knee != null ? r.knee + "/10" : "—", "essuie-glace") +
     stat(r.ankle != null ? r.ankle + "/10" : "—", "cheville") +
@@ -899,6 +904,8 @@ function openEditRun(id) {
     '<label>Durée (min) <input type="number" id="ed-dur" step="1" min="0" value="' + (r.dur || "") + '"></label>' +
     '<label>D+ (m) <input type="number" id="ed-dplus" step="1" min="0" value="' + (r.dplus || 0) + '"></label>' +
     '<label>Chaussures <select id="ed-shoe">' + shoeOpts + "</select></label>" +
+    '<label>Type de route <select id="ed-route"><option value="">—</option>' +
+      ROUTES.map(rt => '<option value="' + rt.id + '"' + (r.route === rt.id ? " selected" : "") + ">" + esc(rt.label) + "</option>").join("") + "</select></label>" +
     '<label>Sensations (/10) <input type="number" id="ed-feel" min="1" max="10" value="' + (r.feel || "") + '"></label>' +
     '<label>Douleur essuie-glace (/10) <input type="number" id="ed-knee" min="0" max="10" value="' + (r.knee != null ? r.knee : "") + '"></label>' +
     '<label>Douleur cheville (/10) <input type="number" id="ed-ankle" min="0" max="10" value="' + (r.ankle != null ? r.ankle : "") + '"></label>' +
@@ -914,6 +921,7 @@ $("#edit-save").addEventListener("click", () => {
   r.dur = parseFloat($("#ed-dur").value) || 0;
   r.dplus = parseInt($("#ed-dplus").value) || 0;
   r.shoeId = $("#ed-shoe").value ? +$("#ed-shoe").value : null;
+  r.route = $("#ed-route").value || null;
   r.feel = $("#ed-feel").value ? +$("#ed-feel").value : null;
   r.knee = $("#ed-knee").value !== "" ? +$("#ed-knee").value : null;
   r.ankle = $("#ed-ankle").value !== "" ? +$("#ed-ankle").value : null;
@@ -955,6 +963,7 @@ function saveRunFromForm() {
     ankle: $("#rf-ankle").value !== "" && $("#rf-ankle").value != null ? +$("#rf-ankle").value : null,
     notes: $("#rf-notes").value.trim(),
     shoeId,
+    route: $("#rf-route").value || null,
     points: (pendingPoints && pendingPoints.length > 1) ? pendingPoints : null,
     planned: plannedRun ? plannedRun.t : null
   };
@@ -963,6 +972,7 @@ function saveRunFromForm() {
   save();
   pendingPoints = null;
   ["#rf-dist", "#rf-dur", "#rf-dplus", "#rf-feel", "#rf-knee", "#rf-ankle", "#rf-notes"].forEach(s => $(s).value = "");
+  $("#rf-route").value = "";
   if (shoeId) {
     const shoe = state.shoes.find(s => s.id === shoeId);
     if (shoe) {
@@ -1209,10 +1219,21 @@ async function sendCoach() {
   renderCoach();
 }
 
+function storageNoteHTML() {
+  if (ServerSync.on)
+    return "<b>Mode dynamique</b> : les données sont enregistrées sur le <b>serveur centralisé</b> " +
+      "(fichier <code>server/data/state.json</code>) et partagées entre tous les appareils connectés. " +
+      "Le navigateur garde une copie de secours (localStorage) si le serveur est injoignable.";
+  return "<b>Mode local</b> : aucune instance de serveur détectée — les données restent dans " +
+    "<b>ce navigateur uniquement</b>. Lance <code>node server/server.js</code> pour un stockage " +
+    "centralisé et partagé entre appareils, ou utilise la synchronisation des cochages ci-dessous.";
+}
+
 /* ================= vue : réglages ================= */
 function renderSettings() {
   $("#view-settings").innerHTML =
     "<h2>Réglages</h2>" +
+    '<div class="note" id="storage-note">' + storageNoteHTML() + "</div>" +
     "<h3>Programme</h3>" +
     '<div class="form-grid">' +
     '<label>Début du programme (lundi S1) <input type="date" id="st-start" value="' + state.start + '"></label>' +
@@ -1382,7 +1403,114 @@ function copyText(txt, msg) {
   else fallback();
 }
 
+/* ================= serveur de stockage (site dynamique) ================= */
+/* Si le site est servi par server/server.js, les données sont centralisées dans
+   data/state.json : tous les appareils partagent le même état. Sans serveur
+   (fichier local ou GitHub Pages), tout retombe sur le localStorage du navigateur. */
+const ServerSync = {
+  on: false,
+  pushTimer: null,
+  pullTimer: null,
+
+  async init() {
+    try {
+      const res = await fetch("api/ping", { cache: "no-store" });
+      if (!res.ok) return;
+      const ping = await res.json();
+      if (!ping || !ping.ok) return;
+      this.on = true;
+      await this.pull(true);
+      this.pullTimer = setInterval(() => this.pull(false), 60000); // resynchronisation périodique
+    } catch (e) { /* pas de serveur : mode local, rien à faire */ }
+    updateStorageBadge();
+  },
+
+  async pull(adopt) {
+    if (!this.on) return;
+    try {
+      const res = await fetch("api/state", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const remote = data && data.state;
+      if (!remote) { this.push(); return; }   // serveur vide : envoyer l'état local
+      const merged = mergeStates(state, remote);
+      merged.updatedAt = Math.max(state.updatedAt || 0, remote.updatedAt || 0);
+      const same = JSON.stringify(sortForCompare(merged)) === JSON.stringify(sortForCompare(state));
+      if (!same) {
+        state = merged;
+        normalizeState();
+        save(); // localStorage + renvoi vers le serveur
+        const view = document.querySelector("nav#tabs button.active");
+        renderView(view ? view.dataset.view : "today");
+      }
+    } catch (e) { /* serveur momentanément injoignable : on reste en local */ }
+  },
+
+  push() {
+    if (!this.on) return;
+    clearTimeout(this.pushTimer);
+    this.pushTimer = setTimeout(() => {
+      fetch("api/state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(state)
+      }).catch(() => {});
+    }, 800);
+  }
+};
+
+/* fusion de deux états sans perte : cochages = union, sorties/chaussures = par id
+   (l'état le plus récent gagne pour un même enregistrement). Chaque champ requis
+   garde une valeur de repli : un état partiel (ancienne version, édition manuelle)
+   ne doit jamais produire un état incomplet. */
+function mergeStates(a, b) {
+  const ta = a.updatedAt || 0, tb = b.updatedAt || 0;
+  const newer = tb >= ta ? b : a;
+  const older = newer === b ? a : b;
+  const out = {
+    start: newer.start || older.start || DEFAULT_START,
+    mistral: newer.mistral || older.mistral || { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" },
+    lastShoeId: newer.lastShoeId != null ? newer.lastShoeId : (older.lastShoeId != null ? older.lastShoeId : null),
+    lastWeekView: newer.lastWeekView != null ? newer.lastWeekView : older.lastWeekView,
+    updatedAt: Math.max(ta, tb)
+  };
+  out.done = {};
+  Object.keys(a.done || {}).forEach(k => { out.done[k] = true; });
+  Object.keys(b.done || {}).forEach(k => { out.done[k] = true; });
+  out.runs = mergeById(a.runs, b.runs, newer === b);
+  out.shoes = mergeById(a.shoes, b.shoes, newer === b);
+  out.seq = Math.max(a.seq || 1, b.seq || 1);
+  out.chat = (newer.chat || []).slice(-60);
+  return out;
+}
+function mergeById(listA, listB, bWins) {
+  const map = new Map();
+  (listA || []).forEach(x => map.set(x.id, { rec: x, fromB: false }));
+  (listB || []).forEach(x => {
+    const prev = map.get(x.id);
+    if (!prev) map.set(x.id, { rec: x, fromB: true });
+    else if (bWins) map.set(x.id, { rec: x, fromB: true });
+  });
+  return Array.from(map.values()).map(v => v.rec).sort((x, y) => x.id - y.id);
+}
+function sortForCompare(st) {
+  const c = Object.assign({}, st);
+  c.done = {};
+  Object.keys(st.done || {}).sort().forEach(k => { c.done[k] = true; });
+  c.runs = (st.runs || []).slice().sort((x, y) => x.id - y.id);
+  c.shoes = (st.shoes || []).slice().sort((x, y) => x.id - y.id);
+  c.chat = st.chat || [];
+  return c;
+}
+function updateStorageBadge() {
+  const el = $("#storage-mode");
+  if (el) el.textContent = ServerSync.on
+    ? "Stockage : serveur centralisé (server/data/state.json) — partagé entre appareils"
+    : "Stockage : ce navigateur uniquement (localStorage)";
+}
+
 /* ================= démarrage ================= */
 renderToday();
 updateHeader();
 importFromHash();
+ServerSync.init();

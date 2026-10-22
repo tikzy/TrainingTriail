@@ -6,16 +6,37 @@ d'entraînement du **Trail des Forts, 72 km, 2 800 m D+ — Besançon, 9 mai 202
 
 ## Lancer le site
 
-Le plus simple — ouvrir `site/index.html` dans un navigateur.
+### Recommandé : site dynamique (données centralisées, partagées entre appareils)
 
-Pour la géolocalisation GPS (enregistrement en direct), les navigateurs exigent
-HTTPS ou localhost. Dans ce cas, servir le dossier en local :
+Le site embarque un petit serveur de stockage (Node pur, **aucune dépendance à
+installer**) :
+
+    node server/server.js
+
+puis ouvrir http://localhost:8000 — depuis un téléphone sur le même réseau :
+http://<ip-de-l-ordinateur>:8000 (autoriser le port 8000 au pare-feu).
+
+Dans ce mode, les données (cochages, sorties, GPS, chaussures, conversation)
+sont enregistrées dans **`server/data/state.json`** : elles sont partagées par
+tous les appareils connectés, survivent au cache et aux navigateurs. Le site
+affiche « Stockage : serveur centralisé » en bas de page ; en cas de serveur
+injoignable, le navigateur continue de travailler sur sa copie locale
+(localStorage) et resynchronise tout seul au retour du serveur (fusion sans
+perte : union des cochages, sorties fusionnées par identifiant, l'état le plus
+récent gagne).
+
+Le serveur peut tourner partout où Node tourne : PC de la maison, mini-serveur,
+ou hébergeur gratuit (Render, Railway, Fly.io…). Sur GitHub Pages seul, le site
+retombe automatiquement en mode statique (localStorage).
+
+### Mode statique (repli)
+
+Ouvrir `site/index.html` directement dans un navigateur. Pour la
+géolocalisation GPS en direct, les navigateurs exigent HTTPS ou localhost :
 
     cd site
     python3 -m http.server 8000
 
-puis ouvrir http://localhost:8000 — depuis un téléphone sur le même réseau :
-http://<ip-de-l-ordinateur>:8000 (autoriser les connexions au pare-feu).
 Sur mobile, utiliser plutôt l'import de fichier GPX exporté depuis une montre
 ou une application GPS si l'enregistrement direct n'est pas pratique.
 
@@ -61,12 +82,21 @@ ou une application GPS si l'enregistrement direct n'est pas pratique.
 
 ## Données
 
-Tout est stocké dans le navigateur (localStorage) — aucun compte, aucun cloud.
-Le pied de page affiche « Enregistré à … » après chaque sauvegarde : si cette mention
-n'apparaît pas, la sauvegarde a échoué. Les traces GPS sont compressées automatiquement
-si le stockage s'approche du quota ; en cas de blocage, le site te prévient et te
-suggère d'exporter une sauvegarde JSON depuis l'onglet Réglages.
-Pense à exporter une sauvegarde JSON régulièrement.
+- **Mode dynamique (recommandé)** : tout est enregistré sur le serveur
+  (`server/data/state.json`) et partagé entre appareils — plus de perte de
+  données liée au navigateur. Le navigateur garde une copie de secours
+  (localStorage) et resynchronise automatiquement (toutes les 60 s et à
+  l'ouverture), avec fusion sans perte.
+- **Mode statique (repli)** : tout est stocké dans le navigateur
+  (localStorage) — aucun compte, aucun cloud, mais propre à chaque appareil.
+  Dans ce cas, utilise la synchronisation des cochages et l'export JSON
+  (onglet Réglages), et ouvre toujours le site depuis la même adresse
+  (fichier local, `localhost:8000` ou GitHub Pages : ce sont trois stockages
+  différents).
+
+Le pied de page affiche le mode de stockage actif et « Enregistré à … » après
+chaque sauvegarde. Les traces GPS sont compressées automatiquement si le
+stockage du navigateur s'approche du quota.
 
 ## Synchroniser les cochages entre appareils
 

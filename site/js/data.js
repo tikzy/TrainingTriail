@@ -53,6 +53,17 @@ const TYPES = {
 
 const RUN_CODES = ["EV", "EP", "SQ1", "SQ2", "SQ3", "SQ4", "DT", "SL", "CAP", "RACE", "LD", "GAM"];
 
+/* types de route/terrain pour les sorties */
+const ROUTES = [
+  { id: "route",   label: "Route / bitume" },
+  { id: "chemin",  label: "Chemin forestier" },
+  { id: "sentier", label: "Sentier technique" },
+  { id: "prairie", label: "Sol souple / prairie" },
+  { id: "tapis",   label: "Tapis de course" },
+  { id: "mixte",   label: "Mixte" }
+];
+function routeLabel(id) { const r = ROUTES.find(x => x.id === id); return r ? r.label : ""; }
+
 /* ---------- constructeurs ---------- */
 const lundi = (rma, nat) => [
   I("matin", "RMA", rma, "RM-A " + rma + "' (+ proprio 5')"),
@@ -502,6 +513,7 @@ function coachContext() {
     .map(r => "- " + r.date + " (" + (TYPES[r.code] || { label: r.code }).label + ") : " +
       (r.dist ? r.dist.toFixed(1) + " km, " : "") + (r.dur ? Math.round(r.dur) + " min, " : "") +
       (r.dplus ? r.dplus + " m D+, " : "") +
+      (r.route ? "terrain : " + routeLabel(r.route) + ", " : "") +
       (r.feel ? "sensations " + r.feel + "/10, " : "") +
       (r.knee != null ? "essuie-glace " + r.knee + "/10, " : "") +
       (r.ankle != null ? "cheville " + r.ankle + "/10, " : "") +
