@@ -1,0 +1,12 @@
+# Configuration cloudflared — tunnel vers le serveur local (port 8000)
+# Copier ce fichier dans ~/.cloudflared/config.yml après l'étape 2 du README,
+# puis remplacer les deux occurrences de l'identifiant du tunnel et le hostname.
+tunnel: A_REMPLACER_PAR_LE_ID_DU_TUNNEL
+credentials-file: /home/Ramon_perez/.cloudflared/A_REMPLACER_PAR_LE_ID_DU_TUNNEL.json
+
+ingress:
+  # URL publique du serveur maison ( domaine fourni par le tunnel)
+  - hostname: maison.mytrailcoach.stream
+    service: http://localhost:8000
+  # tout autre hostname -> 404
+  - service: http_status:404

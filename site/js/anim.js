@@ -146,22 +146,69 @@ function poseAt(fig, t) {
   return out;
 }
 
+/* dégradés partagés par toutes les figures (sol, bois des marches/chaises).
+   Injectés une seule fois dans un SVG masqué : chaque figure y fait référence
+   par url(#g-gnd) / url(#g-wood). */
+(function injectDefs() {
+  const d = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  d.setAttribute("width", "0"); d.setAttribute("height", "0");
+  d.setAttribute("aria-hidden", "true");
+  d.style.position = "absolute";
+  d.innerHTML =
+    '<defs>' +
+    '<linearGradient id="g-gnd" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#2c3d5f"/><stop offset="1" stop-color="#141d31"/>' +
+    "</linearGradient>" +
+    '<linearGradient id="g-wood" x1="0" y1="0" x2="1" y2="1">' +
+    '<stop offset="0" stop-color="#8a6a44"/><stop offset="1" stop-color="#5d452c"/>' +
+    "</linearGradient>" +
+    "</defs>";
+  document.body.appendChild(d);
+})();
+
 function drawPose(p) {
   const line = (a, b, w, cls) => a && b
-    ? '<line x1="' + a[0].toFixed(1) + '" y1="' + a[1].toFixed(1) + '" x2="' + b[0].toFixed(1) + '" y2="' + b[1].toFixed(1) + '" stroke-width="' + w + '" class="limb ' + cls + '"/>'
+    ? '<line x1="' + a[0].toFixed(1) + '" y1="' + a[1].toFixed(1) + '" x2="' + b[0].toFixed(1) + '" y2="' + b[1].toFixed(1) + '" stroke-width="' + w + '" class="' + cls + '"/>'
     : "";
   const poly = (pts, w, cls) => pts && pts[0]
     ? '<polyline points="' + pts.filter(Boolean).map(q => q[0].toFixed(1) + "," + q[1].toFixed(1)).join(" ") + '" stroke-width="' + w + '" class="' + cls + '"/>'
     : "";
+  const dot = (a, r, cls) => a
+    ? '<circle cx="' + a[0].toFixed(1) + '" cy="' + a[1].toFixed(1) + '" r="' + r + '" class="' + cls + '"/>'
+    : "";
+  /* un membre en deux tons : habit (hanche→genou / épaule→coude) puis peau,
+     avec l'articulation en cercle pour un rendu « capsule » continu */
+  const limb2 = (a, mid, b, wUp, wLo, jR, upCls, loCls, jCls, far) => {
+    let s = "";
+    s += line(a, mid, wUp, upCls + (far ? " far" : ""));
+    s += line(mid, b, wLo, loCls + (far ? " far" : ""));
+    s += dot(mid, jR, jCls + (far ? " far" : ""));
+    return s;
+  };
   let s = "";
+  // ombre portée sous le bassin
+  if (p.hip) s += '<ellipse cx="' + p.hip[0].toFixed(1) + '" cy="121" rx="24" ry="4" class="shadow"/>';
+  // membres éloignés (côté droit) : atténués pour la profondeur
+  s += limb2(p.hip, p.kR, p.aR, 8, 6.5, 3.6, "leg-up", "leg-lo", "knee", true);
+  s += dot(p.aR, 3.4, "shoe far");
+  s += limb2(p.sp, p.eR, p.wR, 5.5, 4.8, 2.6, "arm-up", "arm-lo", "elbow", true);
+  s += dot(p.wR, 2.6, "hand far");
+  // tronc (tee-shirt), cou, tête + cheveux
+  s += line(p.sp, p.hip, 14, "torso");
+  if (p.sp && p.h) s += line(p.sp, [p.sp[0] + (p.h[0] - p.sp[0]) * 0.55, p.sp[1] + (p.h[1] - p.sp[1]) * 0.55], 4, "neck");
+  if (p.h) {
+    s += '<circle cx="' + p.h[0].toFixed(1) + '" cy="' + p.h[1].toFixed(1) + '" r="8.5" class="head"/>';
+    s += '<path d="M ' + (p.h[0] - 8.2).toFixed(1) + " " + (p.h[1] - 1).toFixed(1) +
+      " A 8.2 8.2 0 0 1 " + (p.h[0] + 8.2).toFixed(1) + " " + (p.h[1] - 1).toFixed(1) + '" class="hair"/>';
+  }
+  // membres proches (côté gauche)
+  s += limb2(p.hip, p.kL, p.aL, 8, 6.5, 3.6, "leg-up", "leg-lo", "knee", false);
+  s += dot(p.aL, 3.4, "shoe");
+  s += limb2(p.sp, p.eL, p.wL, 5.5, 4.8, 2.6, "arm-up", "arm-lo", "elbow", false);
+  s += dot(p.wL, 2.6, "hand");
+  // corde / élastique par-dessus le corps
   if (p.dash) s += poly(p.dash, 2, "dashline");
   if (p.dash2) s += poly(p.dash2, 2, "dashline");
-  s += line(p.sp, p.hip, 14, "torso");
-  s += poly([p.hip, p.kL, p.aL], 7, "limb");
-  s += poly([p.hip, p.kR, p.aR], 7, "limb");
-  s += poly([p.sp, p.eL, p.wL], 5.5, "limb arm");
-  s += poly([p.sp, p.eR, p.wR], 5.5, "limb arm");
-  if (p.h) s += '<circle cx="' + p.h[0].toFixed(1) + '" cy="' + p.h[1].toFixed(1) + '" r="8.5" class="head"/>';
   return s;
 }
 
@@ -169,10 +216,21 @@ function figureHTML(id) {
   const fig = FIGS[id];
   if (!fig) return "";
   let stat = "";
-  if (fig.box) stat += '<rect x="' + fig.box[0] + '" y="' + fig.box[1] + '" width="' + (fig.box[2] - fig.box[0]) + '" height="' + (fig.box[3] - fig.box[1]) + '" class="box"/>';
+  if (fig.box) {
+    stat += '<rect x="' + fig.box[0] + '" y="' + fig.box[1] + '" width="' + (fig.box[2] - fig.box[0]) +
+      '" height="' + (fig.box[3] - fig.box[1]) + '" rx="2" class="box"/>';
+    // veines du bois
+    for (const f of [0.33, 0.66]) {
+      const gy = fig.box[1] + (fig.box[3] - fig.box[1]) * f;
+      stat += '<line x1="' + fig.box[0] + '" y1="' + gy.toFixed(1) + '" x2="' + fig.box[2] + '" y2="' + gy.toFixed(1) + '" class="box-grain"/>';
+    }
+  }
   if (fig.ellipse) stat += '<ellipse cx="' + fig.ellipse[0] + '" cy="' + fig.ellipse[1] + '" rx="' + fig.ellipse[2] + '" ry="' + fig.ellipse[3] + '" class="dashline"/>';
   return '<svg class="exfig exanim" data-fig="' + id + '" viewBox="0 0 120 130" aria-hidden="true">' +
-    '<line x1="8" y1="122" x2="112" y2="122" class="gnd"/>' + stat + '<g class="dyn"></g></svg>';
+    '<rect x="4" y="122" width="112" height="7" rx="2" class="gnd-strip"/>' +
+    '<line x1="8" y1="122" x2="112" y2="122" class="gnd"/>' +
+    '<path d="M22 122 l-3 4 M46 122 l-2 4 M74 122 l3 4 M98 122 l-2 4" class="ground-tex"/>' +
+    stat + '<g class="dyn"></g></svg>';
 }
 
 /* boucle d'animation unique pour toutes les figures visibles (~30 fps).

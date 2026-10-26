@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "updatedAt": 1793010460968,
+  "state": {
+    "start": "2026-10-19",
+    "mistral": {
+      "key": "",
+      "model": "mistral-small-latest",
+      "url": "https://api.mistral.ai"
+    },
+    "lastShoeId": null,
+    "lastWeekView": null,
+    "updatedAt": 1793010460968,
+    "done": {},
+    "runs": [],
+    "shoes": [],
+    "extra": [],
+    "moves": {
+      "2-0-2": {
+        "w": 2,
+        "d": 0
+      },
+      "2-0-1": {
+        "w": 2,
+        "d": 1
+      }
+    },
+    "seq": 1,
+    "chat": []
+  }
+}

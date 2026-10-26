@@ -150,9 +150,9 @@ const WEEKS = [
     [I("matin", "CORDE", 5, "Corde à sauter 5' (échauffement pliométrie)"), I("matin", "RMC", 20, "RM-C 20' (pliométrie)"), I("autre", "V", 105, "Vélo 1 h 45")],
     [I("autre", "V", 120, "Vélo 2 h"), I("autre", "CAP", 30, "+ CAP 30'")]
   ]},
-  { n: 15, vol: 7.75, light: false, days: [
+  { n: 15, vol: 7.5, light: false, days: [
     lundi(35), [], [I("midi", "SQ2", 50, "Côtes : 4 × 3' en côte")], rmb(25),
-    evdt(55, "6 × 1'"), v(105), sl(195, 1300, "(premier test ravitaillement complet)")
+    evdt(55, "6 × 1'"), v(105), sl(135, 1100, "Course préparatoire n°1 : trail 25-28 km (2 h – 2 h 30, 900-1 200 m D+) — test ravitaillement complet, départ contrôlé (à défaut : SL 3 h 15 — 1 300 m D+)")
   ]},
   { n: 16, vol: 4.5, light: true, days: [
     lundi(25), [], [I("midi", "EV", 45, "EV 45'")], rmb(20),
@@ -167,9 +167,9 @@ const WEEKS = [
     [I("midi", "EV", 55, "EV 55'")], v(90),
     [I("autre", "V", 105, "Vélo 1 h 45"), I("autre", "CAP", 45, "+ CAP 45' à l'allure sortie longue")]
   ]},
-  { n: 19, vol: 8.25, light: false, days: [
-    lundi(30), [], [I("midi", "SQ2", 50, "Côtes : 5 × 3' en côte + descentes vives")], rmb(25),
-    evdt(55, "10 × 1'"), v(120), sl(225, 1600, "(ou trail 28-32 km en course)")
+  { n: 19, vol: 8, light: false, days: [
+    lundi(30), [], [I("midi", "SQ2", 50, "Côtes : 5 × 3' en côte")], rmb(25),
+    evdt(55, "10 × 1'"), v(120), sl(180, 1400, "Course préparatoire n°2 : trail 28-32 km (2 h 45 – 3 h 30, 1 300-1 600 m D+) — répétition générale : matériel, ravito, allure de départ (à défaut : SL 3 h 45 — 1 600 m D+)")
   ]},
   { n: 20, vol: 4, light: true, days: [
     lundi(20), [], [I("midi", "EV", 45, "EV 45'")], rmb(15),
@@ -187,7 +187,7 @@ const WEEKS = [
   { n: 23, vol: 8.75, light: false, days: [
     lundiGain(20), [], [I("midi", "SQ4", 50, "Fartlek 45' montées/descentes")], rmb(15),
     [I("midi", "EV", 50, "EV 50'")], v(90, "souple"),
-    sl(270, 1900, "(la plus grosse sortie du programme)")
+    sl(270, 1900, "(la plus grosse sortie — audit des emballages : glucides/h, sodium, litres)")
   ]},
   { n: 24, vol: 4.5, light: true, days: [
     lundi(20), [], [I("midi", "EV", 45, "EV 45'")], rmb(15),
@@ -196,27 +196,27 @@ const WEEKS = [
   { n: 25, vol: 7.5, light: false, days: [
     lundi(20), [], [I("midi", "SQ3", 50, "Seuil : 3 × 10' (récup 3')")], rmb(15),
     evdt(55, "6 × 1'"), v(90),
-    sl(210, 1500, "à l'allure course — répétition générale : ravitaillement complet, matériel de course")
+    sl(210, 1500, "à l'allure course — répétition générale : ravitaillement complet, matériel de course, première sortie avec bâtons (si le règlement les autorise — décision avant fin S24)")
   ]},
-  { n: 26, vol: 5, light: false, days: [
-    lundiGain(15), [I("matin", "CORDE", 10, "Corde à sauter 10' : 3 × 1'")], [I("midi", "SQ2", 50, "Côtes : 5 × 2' en côte"), I("midi", "DT", 0, "+ DT : 6 × 45''")], rmb(15),
-    [I("midi", "EV", 50, "EV 50'"), I("midi", "GAM", 0, "+ gammes")], v(60),
-    [I("autre", "V", 90, "Vélo 1 h 30"), I("autre", "CAP", 30, "+ CAP 30'")]
+  { n: 26, vol: 4.5, light: false, days: [
+    lundiGain(15), [I("matin", "CORDE", 10, "Corde à sauter 10' : 3 × 1'")], [I("midi", "SQ2", 45, "Côtes : 4 × 2' en côte"), I("midi", "DT", 0, "+ DT : 6 × 45''")], rmb(15),
+    [I("midi", "EV", 45, "EV 45'"), I("midi", "GAM", 0, "+ gammes")], v(45),
+    [I("autre", "V", 60, "Vélo 1 h"), I("autre", "CAP", 30, "+ CAP 30' (bâtons sur les côtes marchées)")]
   ]},
-  { n: 27, vol: 4.5, light: false, days: [
-    lundiGain(15), [], [I("midi", "SQ3", 45, "Seuil : 3 × 8' (récup 3')")], rmb(15),
-    evdt(45, "4 × 1'"), v(60),
-    sl(135, 900, "à l'allure course")
+  { n: 27, vol: 3.25, light: false, days: [
+    lundiGain(15), [], [I("midi", "SQ3", 45, "Seuil : 2 × 8' (récup 3')")], rmb(15),
+    evdt(45, "3 × 1'"), v(45),
+    sl(90, 600, "à l'allure course, avec bâtons (si utilisés le jour J)")
   ]},
-  { n: 28, vol: 2.75, light: false, days: [
-    lundiGain(10, 30), [I("matin", "CORDE", 8, "Corde à sauter 8' douce")], [I("midi", "SQ2", 45, "Côtes : 6 × 1' en côte"), I("midi", "DT", 0, "+ DT : 3 × 45''")], rmb(10),
-    [I("midi", "EV", 40, "EV 40'")], v(45),
-    [I("autre", "CAP", 60, "CAP 1 h dont 3 × 2' à l'allure course")]
+  { n: 28, vol: 2.25, light: false, days: [
+    lundiGain(10, 30), [I("matin", "CORDE", 8, "Corde à sauter 8' douce")], [I("midi", "SQ2", 40, "Côtes : 4 × 1' en côte"), I("midi", "DT", 0, "+ DT : 3 × 45''")], rmb(10),
+    [I("midi", "EV", 40, "EV 40'")], v(30),
+    [I("autre", "CAP", 45, "CAP 45' dont 3 × 2' à l'allure course")]
   ]},
   { n: 29, vol: 6.3, light: false, days: [
     [I("autre", "NAT", 20, "Natation 20' souple"), I("midi", "YOGA", 45, "Yoga doux")],
     [I("matin", "GAING", 10, "Gainage 10'"), I("matin", "PROP", 5, "Proprioception")],
-    [I("midi", "EP", 30, "EP 30' + 4 lignes droites")],
+    [I("midi", "EP", 25, "EP 25' + 2 × 2' seuil léger + 4 lignes droites")],
     [I("autre", "REST", 0, "Repos")],
     [I("midi", "EP", 20, "EP 20' + gammes")],
     [I("midi", "CAP", 15, "CAP 15' + 2-3 lignes droites")],
@@ -499,16 +499,28 @@ la veille d'une sortie longue ou d'une séance qualité, règle de la douleur >3
 = supprimer le dénivelé négatif et consulter un kiné. Priorité si semaine impossible : 1) sortie longue,
 2) séance qualité du mercredi, 3) RM-B, 4) le reste — on ne rattrape jamais une séance manquée.
 Réponds en français, de façon concise, concrète et bienveillante, comme un coach qui connaît le plan.
+Règles issues de la bibliographie ultratrail (Koop, Koerner, Sharman, Garza-Hillman) : juger l'effort (RPE, test de la parole)
+plutôt que la montre ; jamais de fractionné en descente (la descente = technique, pas d'intensité) ; le sous-entraîné bat
+le sur-entraîné, une séance sautée ne se rattrape jamais ; boire à la soif (l'hyponatrémie est plus dangereuse que la
+déshydratation), un peu d'eau avec chaque gel ; jamais d'ibuprofène pendant l'effort long.
+Deux courses préparatoires (S15 : trail 25-28 km, S19 : trail 28-32 km) remplacent la sortie longue : objectifs = répétition
+générale (matériel, ravito, départ contrôlé), pas la performance. Affûtage S26-S29 à décroissance rapide (Koop) : ~55 % du
+pic en S26, 40-45 % en S27, 25 % en S28, moins de 2 h en semaine de course — intensité conservée en touches courtes,
+ne jamais charger ces semaines. Bâtons : décision avant fin S24 (vérifier le règlement), entraînement avec bâtons dès S25
+(au moins 4 semaines, coude à 90°). Jour J : trois tiers en temps (~3 h 30), premier tiers volontairement prudent,
+marche en puissance dès les pentes raides, ne jamais rattraper du temps en descente, ravitos < 2 min, objectifs
+A (10 h 30) / B (11 h 00) / C (finir dans les barrières), rien de neuf jamais.
 Appuie-toi sur l'état du programme et des sorties fourni ci-dessous ; si une information manque, demande-la.
 Ne donne jamais de conseil médical : en cas de douleur persistante, oriente vers un kiné ou un médecin.
 Contexte en temps réel ci-dessous (mis à jour à chaque question) :`;
 
 function coachContext() {
-  const w = currentWeek(), week = WEEKS[w - 1], blk = blockOf(w);
+  const w = currentWeek(), week = effWeek(w), blk = blockOf(w);
   const idx = todayIdx();
-  const today = week.days[idx].map(it => "- [" + (isDone(w, idx, week.days[idx].indexOf(it)) ? "x" : " ") + "] " + TYPES[it.c].label + " : " + it.t).join("\n");
+  const today = week.days[idx].map(x => "- [" + (itemDone(x) ? "x" : " ") + "] " +
+    ((TYPES[x.it.c] || { label: x.it.c }).label) + " : " + x.it.t).join("\n") || "- repos";
   const donePct = weekProgressPct();
-  const wDone = doneMinutes(week), wPlan = plannedMinutes(week);
+  const wDone = realizedMinutes(w), wPlan = plannedMinutes(w);
   const runs = state.runs.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6)
     .map(r => "- " + r.date + " (" + (TYPES[r.code] || { label: r.code }).label + ") : " +
       (r.dist ? r.dist.toFixed(1) + " km, " : "") + (r.dur ? Math.round(r.dur) + " min, " : "") +
@@ -523,6 +535,18 @@ function coachContext() {
     const km = state.runs.filter(r => r.shoeId === s.id).reduce((a, r) => a + (r.dist || 0), 0);
     return "- " + s.name + " : " + km.toFixed(1) + " km / " + s.maxKm + " km estimés" + (s.retired ? " (retraitée)" : "");
   }).join("\n") || "- aucune chaussure suivie";
+  const prof = state.profile;
+  const zones = (typeof hrZones === "function" && hrZones())
+    ? "Zones (Karvonen) : " + hrZones().map(z => z.name.split(" ")[0] + " " + z.lo + "-" + z.hi).join(" · ")
+    : "zones FC non calculables (FC max non renseignée)";
+  const wkNote = (state.notes || {})["S" + w];
+  const dailyAdh = (typeof DAILY !== "undefined" ? DAILY : []).map(d => {
+    const n = weekDates(w).filter(dt => (state.daily || {})[isoDate(dt)] && state.daily[isoDate(dt)][d.c]).length;
+    return (TYPES[d.c] || { label: d.c }).label + " " + n + "/7";
+  }).join(", ");
+  const lastLoads = Object.keys(state.loads || {}).slice(-4)
+    .map(k => "- " + k + " : " + (state.loads[k].kg || 0) + " kg × " + (state.loads[k].reps || "?") + " (" + (state.loads[k].date || "?") + ")")
+    .join("\n");
   const km = state.runs.reduce((a, r) => a + (r.dist || 0), 0);
   const dp = state.runs.reduce((a, r) => a + (r.dplus || 0), 0);
   const j = daysBetween(isoDate(new Date()), RACE.date);
@@ -531,10 +555,130 @@ function coachContext() {
     "\n[ÉTAT DU COUREUR]",
     "Date du jour : " + fmtDate(new Date()),
     "Semaine en cours : S" + w + " (" + blk.name + (week.light ? ", allégée" : "") + "), J-" + j + " avant la course.",
-    "Programme réalisé : " + donePct + " % des séances cochées ; volume semaine : " + fmtHours(wDone) + " / " + fmtHours(wPlan) + " h.",
+    "Programme réalisé : " + donePct + " % des séances cochées ; volume semaine : " + fmtHours(wDone) + " / " + fmtHours(wPlan) + " h" +
+      (extraMinutes(w) ? " (dont " + extraMinutes(w) + " min d'exercices hors programme)" : "") + ".",
     "Séances prévues aujourd'hui :\n" + today,
     "Distance totale courue (enregistrée) : " + km.toFixed(1) + " km, D+ cumulé : " + dp + " m.",
+    "Profil coureur : " + (prof ? (prof.fcm ? "FCM " + prof.fcm + " bpm, " : "") + (prof.repos != null ? "repos " + prof.repos + " bpm, " : "") +
+      (prof.poids != null ? prof.poids + " kg, " : "") + (prof.vma != null ? "VMA " + prof.vma + " km/h" : "") : "non renseigné") + ". " + zones + ".",
+    "Quotidiennes de la semaine (proprio/automassage, hors volume) : " + (dailyAdh || "aucune"),
+    (wkNote ? "Notes de la semaine du coureur : \"" + wkNote + "\"" : ""),
+    (lastLoads ? "Dernières charges de renforcement :\n" + lastLoads : ""),
     "Dernières sorties :\n" + runs,
     "Chaussures :\n" + shoes
   ].join("\n");
 }
+
+/* ================= conseils (onglet Conseils) =================
+   Fondés sur la littérature trail/ultra (nutrition d'endurance, entraînement
+   polarisé, prévention blessures) et sur les règles du plan (coach-trail). */
+const TIPS = [
+  { cat: "Alimentation — avant l'effort", tips: [
+    "Sortie courte du matin : 20-40 g de glucides 30 min avant suffisent (banane, dates, flocons d'avoine). Pas besoin de plus.",
+    "Sortie longue ou séance qualité : repas riche en glucides 2-3 h avant (avoine, riz, pâtes), léger en fibres et en graisses.",
+    "Café 30-60 min avant si tu le tolères — testé d'abord à l'entraînement, jamais pour la première fois en course.",
+    "Rien de nouveau le jour J : chaque sortie longue teste exactement ce que tu feras en course (petit-déj, gels, boisson)."
+  ]},
+  { cat: "Alimentation — pendant l'effort", tips: [
+    "Moins de 60-90 min d'effort : l'eau suffit, pas besoin de glucides.",
+    "Au-delà : 60-90 g de glucides/heure + 500-750 ml de boisson par heure — à mettre en place dès S9.",
+    "Fractionner : une prise toutes les 20-25 min passe mieux qu'un gros apport d'un coup.",
+    "Au-delà de 3 h : ajoute du sodium (200-400 mg/h, jusqu'à 600 mg/h par chaleur) et alterne sucré/salé quand le sucre écœure.",
+    "Le ventre s'entraîne comme les jambes : manger en courant se travaille sur chaque sortie longue.",
+    "Calories dans les poches, hydratation dans les gourdes (Koop) : un peu d'eau avec chaque gel ; bois à la soif — l'hyponatrémie (trop boire) est plus dangereuse que la légère déshydratation.",
+    "Audit des emballages sur la sortie longue de S23 : garde chaque emballage, compte glucides/heure, sodium et litres — tu sauras exactement quoi emporter le jour J.",
+    "Jamais d'ibuprofène pendant l'effort long (risque rénal — Koerner) ; caféine à partir du premier tiers de la course, avec des gels testés à l'entraînement."
+  ]},
+  { cat: "Récupération", tips: [
+    "Dans les 30 min après l'effort : glucides + protéines, ratio ~3:1 (yaourt-banane, lait d'avoine, shake).",
+    "Repas complet dans les 2 h, avec des légumes et des sources de fer (lentilles, viande rouge 1-2 fois/semaine).",
+    "Sommeil : le meilleur dopant légal — vise 7-9 h, et une sieste de 20 min les jours de grosse charge.",
+    "Douleur essuie-glace ou cheville > 3/10 deux séances de suite : retire le dénivelé négatif de la semaine (règle du plan).",
+    "Sous-entraîné bat sur-entraîné (Sharman) : une séance sautée ne se rattrape jamais, un repos imprévu est un avantage, pas un échec.",
+    "Douleur vive et localisée = ajuste tout de suite ; souffrance diffuse de l'effort = normale, on continue (Sharman)."
+  ]},
+  { cat: "Cardio / endurance", tips: [
+    "80-85 % du volume en aisance (zone 2, allure où tu peux parler) : c'est là que se construit le moteur aérobie.",
+    "Évite le « ni vite ni lent » (allure moyennement dure) : adaptations moindres et risque de blessure plus élevé.",
+    "Sur trail, compte le temps en pieds plus que les kilomètres : 3 h sur sentier technique sont un excellent stimulus.",
+    "La qualité du mercredi (fractionné, côtes) se court en frais : pas de renforcement la veille.",
+    "La marche rapide en côte raide est un outil de course : travaille-la dès les SL pour les 12 forts de Besançon.",
+    "Juge l'effort, pas la montre (Koop, Sharman) : sur sentier, allure et zones de FC ne veulent rien dire — test de la parole (phrases complètes) et respiration nasale suffisent en endurance.",
+    "Marche en puissance par choix, pas par détresse : au-dessus d'environ 28 % de pente, marcher coûte moins cher que courir (Sharman). Mange en haut des côtes, jamais dedans (Koerner).",
+    "Répartis le profil de la course sur la semaine dans les 6-8 dernières semaines (environ 130 m de D+ par 10 km) plutôt que dans une seule sortie (Koop)."
+  ]},
+  { cat: "Renforcement / prévention", tips: [
+    "2 séances par semaine suffisent (RM-A lundi, RM-B jeudi) — jamais la veille d'une sortie longue ou d'une qualité.",
+    "Fessier moyen et cheville = tes deux points faibles : ponts fessiers et proprioception chaque semaine, sans exception.",
+    "Pliométrie (RM-C) sur herbe ou sol souple, très progressivement : c'est ce qui te protégera dans les descentes.",
+    "Corde à sauter : 10 min valent un renforcement cheville/mollets complet — même en décalé, ça compte."
+  ]},
+  { cat: "Descentes & technique", tips: [
+    "Regard 3-5 m devant, foulée courte sous le corps, cadence 175-185 pas/min : la descente se travaille (séance DT, jamais sautée).",
+    "S'incline avec la pente plutôt que freiner en arrière — freiner surcharge le genou et l'essuie-glace.",
+    "Dénivelé négatif : +10-15 % par mois maximum.",
+    "Gammes (montées de genoux, talons-fesses, foulées bondissantes) 10 min après échauffement, une fois par semaine.",
+    "Jamais de fractionné en descente (Koop) : la descente se travaille en technique et en retenue, pas en quad-bashing.",
+    "Sur terrain rocheux : pointes légèrement vers l'extérieur (« stance canard » — Koerner), l'assurance anti-entorse de la cheville.",
+    "En course, ne rattrape jamais du temps en descente : les quadriceps sont ton capital de fin de course (Sharman)."
+  ]},
+  { cat: "Matériel", tips: [
+    "Chaussures trail : 600-900 km de durée de vie — suis l'usure dans l'onglet Chaussures et change avant que la mousse meure.",
+    "Deux paires en rotation pendant le pic d'entraînement : une sèche, une en course.",
+    "Teste le sac à charge sur chaque sortie longue : ce qui frotte à 2 h frotte plus à 8 h.",
+    "Semaine allégée = bon moment pour régler le matériel (lacets, anti-frottements) sans fatigue.",
+    "Bâtons : vérifie le règlement avant fin S24 ; si tu les utilises, entraîne-toi avec au moins 4 semaines d'avance (coude à 90°, planté en rythme avec le pied — Koop).",
+    "Option bloc 3 : marche en puissance lestée (gilet ≤ 10-15 % du poids du corps) sur les montées des sorties longues — durcissement progressif des quadriceps (Sharman)."
+  ]},
+  { cat: "Mental & jour J", tips: [
+    "72 km = 12 forts : un à la fois. En course, ne pense qu'au prochain ravitaillement.",
+    "Départ 15-20 % plus lent que ton allure marathon : les barrières à 6,2 km/h récompensent la patience.",
+    "Vise 30 min de marge sur les barrières à mi-course.",
+    "Mauvais passage en course : ça arrive à tout le monde — 10 min de marche, mange, bois, repars. Ça passe.",
+    "Les semaines allégées (S4, S8, S12, S16, S20, S24) ne sont jamais des semaines à charger.",
+    "Trois tiers en temps (~3 h 30 chacun — Sharman) : premier tiers volontairement prudent (l'allure à tenir doit sembler étonnamment lente), deuxième on tient le plan, dernier = la vraie course.",
+    "Objectifs écrits et partagés avant la course (Koerner) : A 10 h 30, B 11 h 00, C finir dans les barrières.",
+    "Ravitos : moins de 2 minutes chacun — 2 min perdues × 15 ravitos = 30 min sur les barrières (Koerner).",
+    "La vraie bonne nuit est celle d'avant-veille (Koerner) ; rien de neuf le jour J — jamais.",
+    "Les courses préparatoires (S15, S19) servent de répétition générale : départ contrôlé, matériel et ravito du jour J — pas de performance."
+  ]}
+];
+
+/* ================= séances standard (formulaire d'ajout, onglet Semaine) ================= */
+const STD_SESSIONS = [
+  { g: "Renforcement", items: [
+    { c: "RMA", t: "RM-A · Jambes & chaîne postérieure", m: 35 },
+    { c: "RMB", t: "RM-B · Tronc, fessiers & cheville", m: 30 },
+    { c: "RMC", t: "RM-C · Pliométrie & gammes", m: 20 },
+    { c: "CORDE", t: "Corde à sauter", m: 15 },
+    { c: "GAING", t: "Gainage léger", m: 10 },
+    { c: "PROP", t: "Proprioception", m: 10 },
+    { c: "MAS", t: "Automassage / mobilité", m: 15 }
+  ]},
+  { g: "Course", items: [
+    { c: "EP", t: "Endurance plate", m: 45 },
+    { c: "EV", t: "Endurance vallonnée", m: 60 },
+    { c: "SL", t: "Sortie longue", m: 120 },
+    { c: "DT", t: "Technique de descente", m: 40 },
+    { c: "SQ1", t: "SQ1 · Qualité (VMA courte)", m: 45 },
+    { c: "SQ2", t: "SQ2 · Qualité (côtes)", m: 50 },
+    { c: "SQ3", t: "SQ3 · Qualité (seuil)", m: 50 },
+    { c: "SQ4", t: "SQ4 · Fartlek", m: 50 },
+    { c: "LD", t: "Longue durée", m: 90 }
+  ]},
+  { g: "Complément", items: [
+    { c: "V", t: "Vélo", m: 90 },
+    { c: "NAT", t: "Natation", m: 45 },
+    { c: "YOGA", t: "Yoga", m: 60 },
+    { c: "GAM", t: "Gammes", m: 30 },
+    { c: "REST", t: "Repos", m: 0 }
+  ]}
+];
+
+/* ================= quotidiennes — hygiène du coureur =================
+   Proposées chaque jour, cochables, mais COMPTÉES À PART du volume
+   (ni dans les minutes planifiées, ni dans le réalisé). */
+const DAILY = [
+  { c: "PROP", t: "Proprioception 5' — unipodale 30\"/jambe × 3 (cheville)", why: "anti-entorse, ta cheville est ton point faible" },
+  { c: "MAS", t: "Automassage 5' — fessier, TFL, essuie-glace + étirements doux", why: "anti-essuie-glace, à faire dès que tu penses au programme" }
+];

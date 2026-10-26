@@ -26,7 +26,8 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px; }
 /* ---------- header ---------- */
 #topbar {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
-  padding: 14px 18px; background: #101a2e; border-bottom: 1px solid var(--line);
+  padding: calc(14px + env(safe-area-inset-top)) 18px 14px;
+  background: #101a2e; border-bottom: 1px solid var(--line);
   position: sticky; top: 0; z-index: 20;
 }
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -42,7 +43,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px; }
 nav#tabs {
   display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px;
   background: #101a2e; border-bottom: 1px solid var(--line);
-  position: sticky; top: 66px; z-index: 19;
+  position: sticky; top: calc(66px + env(safe-area-inset-top)); z-index: 19;
 }
 nav#tabs button {
   background: var(--card); color: var(--txt); border: 1px solid var(--line);
@@ -109,6 +110,7 @@ h4 { margin: 0 0 4px; }
 }
 .hero-date { color: var(--muted); font-size: 13px; text-transform: capitalize; }
 .badge.light { background: #3a3320; color: #e8c56a; font-size: 11px; padding: 2px 8px; border-radius: 10px; vertical-align: middle; }
+.badge.prep { background: #21382b; color: #7fda9a; font-size: 11px; padding: 2px 8px; border-radius: 10px; vertical-align: middle; border: 1px solid rgba(63,191,127,.35); }
 .weekbar { display: flex; align-items: center; gap: 10px; min-width: 220px; flex-direction: column; }
 .weekbar-label { font-size: 12px; color: var(--muted); width: 100%; display: flex; justify-content: space-between; }
 .weekbar-track { background: #0d1626; border-radius: 8px; height: 14px; width: 100%; overflow: hidden; border: 1px solid var(--line); }
@@ -137,6 +139,20 @@ h4 { margin: 0 0 4px; }
 .item-l input { accent-color: var(--teal); width: 17px; height: 17px; cursor: pointer; }
 .dplus { color: var(--dplus); font-size: 12px; white-space: nowrap; }
 .item-actions { display: flex; gap: 4px; align-items: center; }
+.moved-badge { background: #3a3320; color: #e8c56a; font-size: 10px; padding: 1px 6px; border-radius: 8px; white-space: nowrap; }
+
+/* temps d'exercice hors programme (vue progression) */
+.extra-list { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
+.extra-item {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 6px 10px; font-size: 13px;
+}
+.extra-item b { color: var(--teal); }
+
+/* modal de déplacement / échange de séance */
+#move-body .day-card { gap: 5px; }
+#move-body .mini-item { margin-bottom: 2px; }
 
 /* ---------- stats ---------- */
 .stat-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin: 14px 0; }
@@ -153,6 +169,8 @@ h4 { margin: 0 0 4px; }
   cursor: pointer; font-size: 11.5px; font-weight: 600;
 }
 .wsel.active { outline: 2px solid var(--teal); outline-offset: 1px; }
+.wsel.prep { box-shadow: inset 0 -3px 0 var(--ok); }
+.wsel.prep::after { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--ok); margin-left: 3px; vertical-align: 1px; }
 .week-head .muted { margin-top: 2px; }
 .blocks { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px,1fr)); gap: 8px; }
 .block-card { border-left: 4px solid var(--c); background: var(--card); padding: 8px 12px; border-radius: 8px; font-size: 13.5px; }
@@ -192,12 +210,30 @@ h4 { margin: 0 0 4px; }
   border-left: 3px solid var(--warn); border-radius: 6px; padding: 7px 9px; margin: 8px 0; line-height: 1.5;
 }
 
-/* figures SVG animées (moteur d'interpolation, voir js/anim.js) */
-.exfig .limb { stroke: #e8edf5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.exfig .torso { stroke: #cdd9ea; fill: none; stroke-linecap: round; }
-.exfig .head { fill: #e8edf5; }
+/* figures SVG animées (moteur d'interpolation, voir js/anim.js)
+   Rendu « en volume » : peau, tee-shirt, short, chaussures, articulations,
+   ombre au sol et membres éloignés atténués pour donner de la profondeur. */
+.exfig .leg-up, .exfig .leg-lo, .exfig .arm-up, .exfig .arm-lo,
+.exfig .torso, .exfig .neck {
+  fill: none; stroke-linecap: round; stroke-linejoin: round;
+}
+.exfig .leg-up { stroke: #2b3f66; }            /* short */
+.exfig .leg-lo { stroke: #e8b489; }           /* peau (mollet) */
+.exfig .arm-up { stroke: #2f7fbf; }           /* tee-shirt (manche) */
+.exfig .arm-lo { stroke: #e8b489; }           /* peau (avant-bras) */
+.exfig .torso  { stroke: #2f7fbf; }           /* tee-shirt */
+.exfig .neck   { stroke: #e8b489; }
+.exfig .head   { fill: #e8b489; }
+.exfig .hair   { fill: #4a3b32; }
+.exfig .hand, .exfig .knee, .exfig .elbow { fill: #e8b489; }
+.exfig .shoe   { fill: #d95f4b; }
+.exfig .far    { opacity: .7; }               /* membre éloigné : effet de profondeur */
+.exfig .shadow { fill: rgba(0,0,0,.38); }     /* ombre portée au sol */
 .exfig .gnd { stroke: #55647e; stroke-width: 2; }
-.exfig .box { fill: #243350; stroke: #3d5578; stroke-width: 1.5; }
+.exfig .gnd-strip { fill: url(#g-gnd); }
+.exfig .ground-tex { stroke: #46536b; stroke-width: 1; opacity: .55; fill: none; }
+.exfig .box { fill: url(#g-wood); stroke: #7a5a3a; stroke-width: 1.5; }
+.exfig .box-grain { stroke: rgba(0,0,0,.3); stroke-width: 1; }
 .exfig .dashline { stroke: var(--teal); stroke-dasharray: 4 4; stroke-width: 2; fill: none; }
 
 /* ---------- modals ---------- */
@@ -297,6 +333,34 @@ label.full { display: flex; flex-direction: column; font-size: 12px; color: var(
 }
 #toast.hidden { display: none; }
 
+/* ---------- bannière enregistrement GPS (persistante, toutes vues) ---------- */
+#rec-banner {
+  position: fixed; bottom: 64px; right: 14px; z-index: 90;
+  display: flex; align-items: center; gap: 12px;
+  background: var(--card2); border: 1px solid var(--teal); border-radius: 14px;
+  padding: 10px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.5);
+  max-width: min(500px, 94vw);
+}
+#rec-banner.hidden { display: none; }
+#rec-banner.interrupted { border-color: var(--warn); }
+#rec-banner .rec-dot {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--danger);
+  flex-shrink: 0; animation: recpulse 1.2s infinite;
+}
+#rec-banner.paused .rec-dot { animation: none; background: var(--muted); }
+#rec-banner.interrupted .rec-dot { animation: none; background: var(--warn); }
+@keyframes recpulse {
+  0% { box-shadow: 0 0 0 0 rgba(217,95,75,.55); }
+  70% { box-shadow: 0 0 0 9px rgba(217,95,75,0); }
+  100% { box-shadow: 0 0 0 0 rgba(217,95,75,0); }
+}
+.recb-main { display: flex; flex-direction: column; gap: 2px; }
+.recb-main span { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.recb-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- minuteur : toujours au-dessus des autres fenêtres ---------- */
+#timer-modal { z-index: 80; }
+
 /* ---------- séance guidée (player) ---------- */
 .player-dots { display: flex; gap: 5px; margin-bottom: 4px; }
 .player-dots i { width: 16px; height: 6px; border-radius: 3px; background: #2a3a5c; }
@@ -329,7 +393,64 @@ footer#foot { text-align: center; color: var(--muted); font-size: 11.5px; paddin
 
 @media (max-width: 700px) {
   .topstats { display: none; }
-  nav#tabs { top: 78px; }
+  nav#tabs { top: calc(78px + env(safe-area-inset-top)); }
   .exo-detail { flex-direction: column; align-items: center; }
   .exo-detail .exfig { width: 140px; }
 }
+
+/* ---- onglet Semaine : échange / masquage / séances ajoutées (2026-10) ---- */
+.item.swap-sel { outline: 2px solid var(--acc); background: rgba(47, 127, 191, .15); }
+.swap-banner { background: rgba(47, 127, 191, .12); border: 1px solid var(--acc); border-radius: 10px; padding: 10px 12px; margin: 10px 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.add-form { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
+.add-form .form-grid { margin: 0; }
+.custom-badge { font-size: 10.5px; color: var(--teal); border: 1px solid var(--teal); border-radius: 8px; padding: 1px 6px; margin-left: 6px; }
+
+/* ---- onglet Conseils ---- */
+.tip { background: var(--card); border-left: 3px solid var(--acc); border-radius: 8px; padding: 9px 12px; margin: 7px 0; line-height: 1.45; }
+
+/* ---- verrouillage ---- */
+.lock-box { max-width: 330px; }
+.lock-remember { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+
+
+/* ---- courbes d'une sortie (altitude / vitesse / FC vs temps) ---- */
+.run-plots { margin-top: 8px; }
+.plot-block { margin: 10px 0 2px; }
+.plot-title { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+
+/* ---- profil, avertissements, notes (2026-10) ---- */
+.zones { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-top: 10px; }
+.zone-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+.zone-row:last-of-type { border-bottom: none; }
+.plan-warnings { border: 1px solid var(--warn); background: rgba(217, 160, 63, .12); border-radius: 10px; padding: 10px 12px; margin: 10px 0; line-height: 1.5; }
+.item.missed { opacity: .42; }
+.item.missed .item-txt { text-decoration: line-through; text-decoration-color: rgba(147, 161, 184, .6); }
+.load-block { border: 1px dashed var(--line); border-radius: 10px; padding: 6px 10px; margin: 8px 0; }
+.tip-focus { color: var(--teal); }
+#week-notes { width: 100%; background: var(--card); color: var(--txt); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: inherit; }
+#toast button { background: var(--teal); color: #08202a; border: none; border-radius: 14px; padding: 4px 12px; font-weight: 600; margin-left: 10px; cursor: pointer; }
+
+/* ---- thème clair ---- */
+:root.theme-light {
+  --bg: #eef2f8; --bg2: #e4ebf4; --card: #ffffff; --card2: #f1f5fb;
+  --line: #c5d2e4; --txt: #1b2740; --muted: #5a6b85;
+}
+:root.theme-light body { background: linear-gradient(180deg, var(--bg), var(--bg2) 60%); }
+:root.theme-light #topbar, :root.theme-light nav#tabs { background: #ffffff; }
+:root.theme-light nav#tabs button { background: #f1f5fb; }
+:root.theme-light nav#tabs button.active { background: var(--acc); color: #fff; }
+
+/* ---- grande taille de police ---- */
+:root[data-font="1"] body { font-size: 17px; zoom: 1.07; }
+
+/* ---- onglets : flèche pour masquer/afficher la section (manuel) ---- */
+#nav-toggle { font-size: 15px; padding: 8px 10px; line-height: 1; }
+nav#tabs.collapsed { display: none; }
+
+/* ---- quotidiennes (proprio/automassage — hors volume) ---- */
+.daily-week-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--line); flex-wrap: wrap; }
+.daily-week-row:last-child { border-bottom: none; }
+.daily-week-row > span { flex: 1; min-width: 150px; }
+.daily-dots { display: flex; gap: 5px; }
+.day-dot { background: var(--card2); color: var(--muted); border: 1px solid var(--line); border-radius: 50%; width: 30px; height: 30px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.day-dot.on { background: var(--teal); color: #08202a; border-color: var(--teal); }

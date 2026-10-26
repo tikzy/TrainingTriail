@@ -1,0 +1,29 @@
+# TrainingTrail — Worker + D1 (stockage central sans machine dédiée)
+# Sert le site (../../site) et l'API /api/* sur https://mytrailcoach.stream.
+name = "trainingtrail"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+
+# Domaine personnalisé : créé automatiquement au déploiement si la zone
+# mytrailcoach.stream est active dans le compte Cloudflare.
+routes = [
+  { pattern = "mytrailcoach.stream", custom_domain = true }
+]
+
+# Fichiers statiques du site. run_worker_first fait passer /api/* par le
+# Worker (nécessite wrangler >= 4 : npm i -g wrangler@4 ou utiliser npx).
+[assets]
+directory = "../../site"
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "trainingtrail"
+# À remplacer par l'identifiant affiché par : npx wrangler d1 create trainingtrail
+database_id = "e06dae61-fd57-4b96-a0d0-ba958cbc67fb"
+
+# Traces GPS hors état D1 (plafonné à 2 Mo) : bucket R2.
+[[r2_buckets]]
+binding = "TRACKS"
+bucket_name = "trainingtrail-tracks"
