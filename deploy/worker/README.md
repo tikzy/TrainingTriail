@@ -41,6 +41,56 @@ dans `wrangler.toml`) et en secours
 Sur l'iPhone : ajouter à l'écran d'accueil (Safari > Partager > Sur l'écran
 d'accueil) pour un accès direct. La géolocalisation live fonctionne (HTTPS).
 
+## Montre Polar (Vantage M3) — API AccessLink
+
+L'app importe les sorties de la montre directement depuis Polar (API officielle
+AccessLink v3), via le worker : client id/secret et jeton d'accès restent côté
+serveur (table D1 `polar`), jamais dans le navigateur.
+
+### 1. Créer le client AccessLink (une fois)
+
+1. Compte Polar Flow + montre appairée (app mobile Polar Flow, Bluetooth).
+2. Sur https://admin.polaraccesslink.com, se connecter avec ce compte et créer
+   un client : accepter la licence, activer les types de données
+   « Exercise data », « Sleep data » et « Physical information ».
+3. Noter le **client id** et le **client secret** (affichés une seule fois).
+4. Authorization redirect URL : `https://<domaine>/api/polar/callback`
+   (ex. `https://mytrailcoach.stream/api/polar/callback`) — correspondance
+   exacte exigée.
+
+### 2. Configurer le worker
+
+```bash
+cd deploy/worker
+npx wrangler secret put POLAR_CLIENT_ID
+npx wrangler secret put POLAR_CLIENT_SECRET
+npx wrangler d1 execute trainingtrail --remote --file=schema.sql   # crée la table polar
+npx wrangler d1 execute trainingtrail --local  --file=schema.sql   # pour wrangler dev
+npx wrangler deploy
+```
+
+### 3. Dans l'app
+
+Réglages → Montre Polar → « Connecter ma montre Polar » : autorisation sur
+polar.com, retour automatique (`/#polar=ok`). Ensuite l'import se lance à chaque
+chargement de l'app et via « Importer les sorties Polar » ; « Actualiser le
+profil » copie FC max, FC repos, poids et VO2max depuis Polar Flow.
+
+Sont aussi synchronisés à chaque ouverture ( carte « Récupération » de la vue
+Aujourd'hui, et contexte du coach IA) : sommeil (score, durée, profond/REM),
+Nightly Recharge (recharge ANS, VFC RMSSD, respiration nocturne) et charge
+cardio quotidienne (strain/tolérance/statut). Ces données nécessitent
+« Sleep data » activé chez Polar et se limitent aux 28-30 derniers jours côté
+API ; l'app en garde 120 jours.
+
+Limites Polar (documentation AccessLink) : la liste `/v3/exercises` ne couvre que
+les **30 derniers jours** et seulement les exercices téléversés **après** la
+connexion ; le jeton est longue durée (pas de refresh, ~1 an) ; les traces sont
+récupérées en GPX quand la séance en contient une (sinon résumé seul : distance,
+durée, FC moy/max, Running Index). Sans worker (hébergement statique),
+l'import n'est pas disponible : exporter les GPX depuis Polar Flow et les
+importer dans l'onglet Sorties.
+
 ## Limites et notes
 
 - `directory = "../../site"` pointe hors du dossier `deploy/worker`. Si votre

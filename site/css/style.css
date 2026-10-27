@@ -447,6 +447,61 @@ footer#foot { text-align: center; color: var(--muted); font-size: 11.5px; paddin
 #nav-toggle { font-size: 15px; padding: 8px 10px; line-height: 1; }
 nav#tabs.collapsed { display: none; }
 
+/* ---- zoom verrouillé sur mobile (demande du coureur) :
+   pincement désactivé (touch-action), le double-tap reste utilisable ---- */
+html, body { touch-action: pan-x pan-y; }
+
+/* ---- onglet Programme : semaine affichée horizontalement (défilement latéral) ---- */
+.week-grid.hscroll {
+  display: flex; flex-wrap: nowrap; gap: 12px;
+  overflow-x: auto; padding-bottom: 10px;
+  scroll-snap-type: x proximity;
+}
+.week-grid.hscroll .day-card { flex: 0 0 min(300px, 80vw); scroll-snap-align: start; }
+.week-grid.hscroll::-webkit-scrollbar { height: 8px; }
+.week-grid.hscroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.week-grid.hscroll::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- coach IA : markdown dans les réponses ---- */
+.coach-msg.ai .coach-bubble { white-space: normal; }
+.coach-bubble p { margin: 0 0 8px; }
+.coach-bubble p:last-child { margin: 0; }
+.coach-bubble h5 { margin: 10px 0 4px; font-size: 15px; color: #bfe3ff; }
+.coach-bubble ul, .coach-bubble ol { margin: 4px 0 8px; padding-left: 20px; }
+.coach-bubble li { margin: 2px 0; }
+.coach-bubble code { background: #0d1626; border: 1px solid var(--line); border-radius: 5px; padding: 0 4px; font-size: 12.5px; }
+.coach-bubble pre { background: #0d1626; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; overflow-x: auto; font-size: 12px; line-height: 1.45; }
+.coach-bubble pre code { background: none; border: none; padding: 0; }
+.coach-bubble blockquote { border-left: 3px solid var(--acc); margin: 6px 0; padding: 2px 10px; color: #c7d4e6; }
+.coach-bubble hr { border: none; border-top: 1px solid var(--line); margin: 8px 0; }
+.coach-bubble a { color: var(--teal); }
+.coach-bubble table.md-table { border-collapse: collapse; margin: 6px 0; font-size: 13px; display: block; overflow-x: auto; }
+.coach-bubble table.md-table td { border: 1px solid var(--line); padding: 4px 8px; }
+.coach-bubble table.md-table tr:first-child td { color: #bfe3ff; font-weight: 600; }
+
+/* ---- coach IA : barre de navigation des conversations (◀ ▶) ---- */
+.conv-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.conv-title { flex: 1; min-width: 140px; font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-bar .icon-btn { font-size: 15px; padding: 4px 11px; }
+
+/* suggestions repliées : une ligne tant que l'utilisateur ne les déroule pas */
+.coach-sugg-det { background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; margin: 10px 0 0; }
+.coach-sugg-det summary { cursor: pointer; font-size: 13px; font-weight: 600; list-style-position: inside; }
+.coach-sugg-det[open] summary { margin-bottom: 4px; }
+.coach-sugg-det .coach-sugg { margin: 6px 0 4px; }
+
+/* ---- coach IA : contextualisation (sorties, GPX) ---- */
+.coach-attach { background: var(--card2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin: 10px 0 0; }
+.coach-attach summary { cursor: pointer; font-size: 13.5px; font-weight: 600; list-style-position: inside; }
+.attach-zone { margin-top: 8px; }
+.attach-runs { max-height: 240px; overflow-y: auto; margin: 6px 0; }
+.attach-run { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); flex-wrap: wrap; }
+.attach-run:last-child { border-bottom: none; }
+.attach-run > select { padding: 4px 6px; font-size: 12.5px; margin-left: auto; }
+.attach-gpx { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.gpx-chip { background: #21382b; color: #7fda9a; border: 1px solid rgba(63,191,127,.35); border-radius: 10px; padding: 3px 8px; font-size: 12px; white-space: nowrap; }
+.gpx-chip button { background: none; border: none; color: inherit; cursor: pointer; font-weight: 700; font-size: 14px; padding: 0 2px; }
+
 /* ---- quotidiennes (proprio/automassage — hors volume) ---- */
 .daily-week-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--line); flex-wrap: wrap; }
 .daily-week-row:last-child { border-bottom: none; }
@@ -454,3 +509,154 @@ nav#tabs.collapsed { display: none; }
 .daily-dots { display: flex; gap: 5px; }
 .day-dot { background: var(--card2); color: var(--muted); border: 1px solid var(--line); border-radius: 50%; width: 30px; height: 30px; font-size: 12px; font-weight: 600; cursor: pointer; }
 .day-dot.on { background: var(--teal); color: #08202a; border-color: var(--teal); }
+
+/* ---- récupération Polar (sommeil, recharge ANS/VFC, charge cardio) ---- */
+.polar-card { border-color: rgba(25,168,160,.4); }
+.polar-charge { font-size: 15px; font-weight: 700; padding: 2px 0 6px; }
+.polar-charge.ok { color: var(--teal); }
+.polar-charge.mid { color: #d9a03f; }
+.polar-charge.low { color: #e06a5a; }
+.polar-stats { margin-top: 2px; }
+.polar-trend { display: flex; align-items: flex-end; gap: 8px; height: 74px; margin: 10px 0 2px; }
+.polar-day { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 0; }
+.polar-day > label { font-size: 10.5px; color: var(--muted); text-align: center; line-height: 1.25; margin-top: 3px; }
+.polar-bar { width: 70%; max-width: 26px; min-height: 3px; border-radius: 4px 4px 0 0; margin-top: auto; }
+.polar-bar.ok { background: var(--teal); }
+.polar-bar.mid { background: #d9a03f; }
+.polar-bar.low { background: #e06a5a; }
+.polar-bar.na { background: var(--line); }
+
+/* ---- sous-onglets (barre sous les onglets principaux) ---- */
+#subtabs {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 10px;
+  background: #101a2e; border-bottom: 1px solid var(--line);
+  margin-top: -1px;
+}
+#subtabs button {
+  background: transparent; color: var(--muted); border: 1px solid transparent;
+  padding: 6px 12px; border-radius: 16px; cursor: pointer; font-size: 13px;
+}
+#subtabs button.active { color: #bfe3ff; border-color: var(--acc); background: rgba(61,110,165,0.16); font-weight: 600; }
+nav#tabs.collapsed + #subtabs { display: none; }
+
+/* ---- résumé du programme : blocs ---- */
+.block-row { display: flex; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--line); align-items: flex-start; }
+.block-row:last-child { border-bottom: none; }
+.block-row.cur { background: rgba(61,110,165,0.12); border-radius: 10px; padding-left: 8px; padding-right: 8px; }
+.block-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 6px; flex: none; }
+.block-row .badge { margin-left: 6px; }
+
+/* ---- feuille nutrition ---- */
+.food-sheet { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; }
+.food-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 700px) { .food-cols { grid-template-columns: 1fr; } }
+.food-col { border-radius: 10px; padding: 10px; }
+.food-col.good { background: rgba(14,125,125,0.12); }
+.food-col.bad { background: rgba(224,106,90,0.10); }
+.food-col h4 { font-size: 13.5px; margin-bottom: 6px; }
+.food-col.good h4 { color: #59c7b3; }
+.food-col.bad h4 { color: #e58f80; }
+.food-col ul { margin: 0; padding-left: 18px; }
+.food-col li { font-size: 13px; margin-bottom: 7px; line-height: 1.45; }
+.food-why { margin-top: 10px; font-size: 12.5px; color: var(--muted); font-style: italic; line-height: 1.45; }
+
+/* ---- recettes ---- */
+.recipe-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 12px; }
+.chip.active { background: var(--acc); color: #fff; border-color: var(--acc); font-weight: 600; }
+.recipe-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+.recipe-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.recipe-cols { display: grid; grid-template-columns: 1fr 1.4fr; gap: 12px; margin: 8px 0; }
+@media (max-width: 700px) { .recipe-cols { grid-template-columns: 1fr; } }
+.recipe-ing, .recipe-steps { font-size: 13.5px; }
+.recipe-ing ul { margin: 4px 0 0; padding-left: 18px; }
+.recipe-ing li { margin-bottom: 4px; }
+.recipe-steps ol { margin: 4px 0 0; padding-left: 20px; }
+.recipe-steps li { margin-bottom: 6px; line-height: 1.45; }
+
+/* ---- popup post-exercice ---- */
+.postexo-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 10px 0; }
+@media (max-width: 700px) { .postexo-grid { grid-template-columns: 1fr; } }
+.postexo-sec { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.postexo-sec h4 { color: #bfe3ff; font-size: 14px; margin-bottom: 6px; }
+.postexo-sec ul { margin: 0; padding-left: 18px; }
+.postexo-sec li { font-size: 13px; margin-bottom: 7px; line-height: 1.45; }
+
+/* ---- résumé des sorties : feuille + lignes-liens ---- */
+.run-sheet-total { margin-bottom: 6px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+table.run-sheet { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }
+table.run-sheet th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--muted); padding: 10px 10px 6px; border-bottom: 1px solid var(--line);
+}
+table.run-sheet td { padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.run-sheet tbody tr:last-child td { border-bottom: none; }
+tr.run-row { cursor: pointer; }
+tr.run-row:hover td { background: rgba(61,110,165,0.14); }
+.run-card.flash { outline: 2px solid var(--acc); box-shadow: 0 0 0 4px rgba(61,110,165,0.25); }
+
+/* ---- volets (shutters) : conseils, recettes, exercices ---- */
+details.shutter {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 0; margin: 8px 0; overflow: hidden;
+}
+details.shutter > summary {
+  list-style: none; cursor: pointer; padding: 12px 14px;
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  font-weight: 600; font-size: 14.5px; user-select: none;
+}
+details.shutter > summary::-webkit-details-marker { display: none; }
+details.shutter > summary::after {
+  content: "▸"; color: var(--muted); font-size: 12px; transition: transform 0.15s; flex: none;
+}
+details.shutter[open] > summary::after { transform: rotate(90deg); }
+details.shutter[open] > summary { border-bottom: 1px solid var(--line); }
+details.shutter > summary .badge { font-weight: 400; }
+details.shutter > *:not(summary) { padding: 0 14px; }
+details.shutter > .tip-list { padding: 10px 14px 12px; }
+details.shutter > .note { padding: 10px 14px 12px; margin: 0; }
+details.shutter .muted.small { padding-top: 10px; }
+details.shutter > .tip { margin: 8px 0 10px; }
+
+/* ---- zones de fréquence cardiaque Polar (5 zones) ---- */
+.hr-zones { margin: 10px 0 4px; }
+.hr-zones-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; border: 1px solid var(--line); }
+.hr-zone-seg { min-width: 1px; }
+.hr-zones-legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 6px; }
+.hr-zones-legend span { font-size: 11.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 5px; }
+.hr-zones-legend i { width: 9px; height: 9px; border-radius: 3px; display: inline-block; flex: none; }
+.badge.hr-load-lo { background: rgba(63,191,127,0.18); color: #6fd3a9; border-color: rgba(63,191,127,0.4); }
+.badge.hr-load-mid { background: rgba(230,194,41,0.15); color: #e6c229; border-color: rgba(230,194,41,0.4); }
+.badge.hr-load-hi { background: rgba(224,82,82,0.16); color: #ef8b7d; border-color: rgba(224,82,82,0.45); }
+.hr-chart { width: 100%; height: 96px; margin-top: 8px; border-radius: 10px; background: rgba(255,255,255,0.03); }
+
+/* ---- Traces : liste, visionneuse (carte IGN/OSM + courbes avec réticule) ---- */
+.trace-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.trace-item {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: var(--card2); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; color: inherit; text-align: left; cursor: pointer; font: inherit;
+}
+.trace-item:hover { border-color: var(--acc); }
+.trace-date { font-weight: 700; min-width: 66px; }
+.trace-meta { color: var(--muted); font-size: 12.5px; flex: 1; }
+.trace-open { font-size: 12px; color: var(--acc); white-space: nowrap; }
+.trace-head { align-items: center; }
+.layer-switch { display: flex; gap: 6px; margin: 10px 0 6px; flex-wrap: wrap; }
+#trace-map {
+  height: 340px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line);
+  background: #dfe6ee; z-index: 0;
+}
+#trace-map .muted.small { padding: 14px; }
+.trace-readout {
+  margin: 8px 0 2px; font-variant-numeric: tabular-nums; font-size: 13px;
+  min-height: 20px; color: var(--ink);
+}
+.xplot { touch-action: none; cursor: crosshair; }
+.xhair-line { stroke: rgba(255,255,255,0.85); stroke-width: 1; stroke-dasharray: 3 3; }
+.xhair-dot { fill: #ffd166; stroke: #1f2430; stroke-width: 1.5; }
+/* Leaflet sur fond sombre : contrôles et info de droit */
+.leaflet-container { font: inherit; }
+.leaflet-control-attribution { background: rgba(14,20,32,0.75) !important; color: #cfd6e0 !important; font-size: 10px !important; }
+.leaflet-control-attribution a { color: #9fb8d4 !important; }
+.leaflet-bar a { background: #182234 !important; color: #dbe6f2 !important; border-color: #2a3648 !important; }

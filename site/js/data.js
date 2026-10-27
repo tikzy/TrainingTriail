@@ -514,6 +514,41 @@ Appuie-toi sur l'état du programme et des sorties fourni ci-dessous ; si une in
 Ne donne jamais de conseil médical : en cas de douleur persistante, oriente vers un kiné ou un médecin.
 Contexte en temps réel ci-dessous (mis à jour à chaque question) :`;
 
+/* récupération Polar (si la montre est connectée) : résumé pour le coach —
+   3 dernières nuits (sommeil, recharge ANS/VFC) + charge cardio récente.
+   Règle transmise au coach : récupération compromise -> séance facile/échange. */
+function polarRecoveryContext() {
+  const pn = (typeof state !== "undefined" && state && state.polarNights) || {};
+  const dates = Object.keys(pn).sort();
+  const last3 = dates.slice(-3);
+  if (!last3.length) return "";
+  const lines = last3.map(d => {
+    const n = pn[d] || {}, sl = n.slp, rc = n.rec;
+    let t = "- " + d + " :";
+    if (rc && rc.st != null) {
+      const lbl = rc.st >= 5 ? "bien récupéré" : rc.st >= 4 ? "récupération correcte" : rc.st >= 3 ? "récupération moyenne" : "récupération compromise";
+      t += " " + lbl + (rc.ans != null ? " (recharge ANS " + (rc.ans >= 0 ? "+" : "") + Math.round(rc.ans * 10) / 10 + ")" : "");
+      if (rc.hrv != null) t += ", VFC RMSSD " + rc.hrv + " ms";
+      if (rc.br != null) t += ", respiration " + rc.br + "/min";
+    }
+    if (sl) {
+      t += " · sommeil " + (sl.dur ? Math.floor(sl.dur / 60) + " h " + String(sl.dur % 60).padStart(2, "0") : "?");
+      if (sl.score) t += " (score " + sl.score + "/100" + (sl.deep != null ? ", profond " + sl.deep + " min" : "") + ")";
+    }
+    return t;
+  }).join("\n");
+  let loadTxt = "";
+  const ldDates = dates.filter(d => pn[d].load);
+  if (ldDates.length) {
+    const d = ldDates[ldDates.length - 1], ld = pn[d].load;
+    loadTxt = "\nCharge cardio du " + d + " : " + ld.v +
+      (ld.st ? " (" + (ld.st.indexOf("STRAINED") >= 0 ? "en surcharge" : ld.st.indexOf("BALANCED") >= 0 ? "équilibrée" : ld.st.indexOf("RECOVERY") >= 0 ? "en dessous de la moyenne" : "?") + ")" : "") +
+      (ld.str != null && ld.tol != null ? " (strain " + ld.str + " / tolérance " + ld.tol + ")" : "");
+  }
+  return "Récupération Polar (montre, " + last3.length + " dernières nuits) :\n" + lines + loadTxt + "\n" +
+    "Règle : recharge compromise (stade ≤ 3) ou sommeil < 6 h deux nuits de suite -> privilégier l'endurance facile, échanger la séance qualité si besoin ; un repos non prévu reste un bon choix. Bien récupéré -> séance qualité possible comme prévu.";
+}
+
 function coachContext() {
   const w = currentWeek(), week = effWeek(w), blk = blockOf(w);
   const idx = todayIdx();
@@ -525,6 +560,8 @@ function coachContext() {
     .map(r => "- " + r.date + " (" + (TYPES[r.code] || { label: r.code }).label + ") : " +
       (r.dist ? r.dist.toFixed(1) + " km, " : "") + (r.dur ? Math.round(r.dur) + " min, " : "") +
       (r.dplus ? r.dplus + " m D+, " : "") +
+      (r.polar && r.polar.hr ? "FC moy " + r.polar.hr.average + " / max " + r.polar.hr.maximum + " bpm, " : "") +
+      (r.polar && r.polar.ri != null ? "Running Index " + r.polar.ri + ", " : "") +
       (r.route ? "terrain : " + routeLabel(r.route) + ", " : "") +
       (r.feel ? "sensations " + r.feel + "/10, " : "") +
       (r.knee != null ? "essuie-glace " + r.knee + "/10, " : "") +
@@ -560,8 +597,10 @@ function coachContext() {
     "Séances prévues aujourd'hui :\n" + today,
     "Distance totale courue (enregistrée) : " + km.toFixed(1) + " km, D+ cumulé : " + dp + " m.",
     "Profil coureur : " + (prof ? (prof.fcm ? "FCM " + prof.fcm + " bpm, " : "") + (prof.repos != null ? "repos " + prof.repos + " bpm, " : "") +
-      (prof.poids != null ? prof.poids + " kg, " : "") + (prof.vma != null ? "VMA " + prof.vma + " km/h" : "") : "non renseigné") + ". " + zones + ".",
+      (prof.poids != null ? prof.poids + " kg, " : "") + (prof.vo2 != null ? "VO2max " + prof.vo2 + " ml/kg/min, " : "") +
+      (prof.vma != null ? "VMA " + prof.vma + " km/h" : "") : "non renseigné") + ". " + zones + ".",
     "Quotidiennes de la semaine (proprio/automassage, hors volume) : " + (dailyAdh || "aucune"),
+    polarRecoveryContext(),
     (wkNote ? "Notes de la semaine du coureur : \"" + wkNote + "\"" : ""),
     (lastLoads ? "Dernières charges de renforcement :\n" + lastLoads : ""),
     "Dernières sorties :\n" + runs,
@@ -682,3 +721,271 @@ const DAILY = [
   { c: "PROP", t: "Proprioception 5' — unipodale 30\"/jambe × 3 (cheville)", why: "anti-entorse, ta cheville est ton point faible" },
   { c: "MAS", t: "Automassage 5' — fessier, TFL, essuie-glace + étirements doux", why: "anti-essuie-glace, à faire dès que tu penses au programme" }
 ];
+
+/* ================= feuille nutrition (onglet Aide > Nutrition) =================
+   Synthèse « manger / éviter » par moment de la journée d'un coureur, orientée
+   récupération (acidité musculaire, crampes, tendons), sobriété carbone et
+   régime majoritairement végétarien. Reste alignée avec les règles du plan :
+   60-90 g CH/h en course, récup 3:1 dans les 30-45', rien de nouveau le jour J. */
+const FOOD_SHEET = [
+  { cat: "Quotidien — la base",
+    good: ["Légumineuses (lentilles, pois chiches, haricots) : protéines + fer, l'aliment le plus sobre en CO2",
+      "Céréales complètes (avoine, riz complet, quinoa, pâtes complètes) : glucides lents + magnésium",
+      "Oléagineux (noix, amandes, noisettes) : oméga-3, magnésium — une poignée/jour",
+      "Fruits de saison et locaux (pomme, poire, prune…) et fruits séchés (dattes, abricots, raisins)",
+      "Légumes verts et colorés à chaque repas, dont une portion crue (vitamine C, antioxydants)",
+      "Eau plate à volonté — vérifie la couleur des urines (claires = bien hydraté)"],
+    bad: ["Viande rouge et charcuterie plus de 1-2 fois/semaine (charge acide, CO2 élevé)",
+      "Produits ultra-transformés, sodas, sucreries industrielles (inflammation de fond)",
+      "Alcool (ralentit la récupération et le sommeil profond)"],
+    why: "80 % des effets se jouent sur l'assiette quotidienne, pas sur le jour de séance. Une base végétale et complète couvre fer, magnésium et oméga-3, les trois carences classiques du coureur." },
+  { cat: "Avant l'effort (0 à 3 h)",
+    good: ["2-3 h avant : repas riche en glucides, léger en fibres et graisses (avoine, riz, pâtes)",
+      "30-60' avant si sortie du matin : 20-40 g de glucides simples (banane, dattes, tartine miel)",
+      "Café 30-60' avant si tu le tolères — jamais testé pour la première fois le jour J"],
+    bad: ["Fibres en grande quantité juste avant (légumes crus, légumineuses non testées)",
+      "Plats gras ou frits dans les 3 h (digestion lente)",
+      "Sucres rapides 10' avant le départ en dehors de la sortie très courte (pic puis creux d'énergie)"],
+    why: "Le but : des réserves pleines et un estomac vide. Tout ce qui stagne dans l'estomac part dans les jambes en moins." },
+  { cat: "Pendant l'effort (> 1 h)",
+    good: ["60-90 g de glucides par heure dès que l'effort dépasse 1 h 30 (dès S9 sur les sorties longues)",
+      "500 à 750 ml d'eau par heure ; par forte chaleur, ajoute du sodium (600-800 mg/l bu)",
+      "Alterner sucré/salé quand le sucre écœure ; fractionner une prise toutes les 20-25 min",
+      "Compotes et barres maison de l'onglet Recettes : testées à l'entraînement, jamais neuves en course"],
+    bad: ["Boire uniquement quand on a soif sur les efforts longs (la soif arrive trop tard)",
+      "Trop boire de l'eau seule sur très longs efforts (hyponatrémie — le vrai danger, pire que la déshydratation)",
+      "Ibuprofène ou anti-inflammatoire pendant l'effort (risque rénal, rhabdomyolyse)"],
+    why: "Règle Koop : « les calories dans la poche, l'hydratation dans les bidons ». Chaque sortie longue répète le ravitaillement du jour J." },
+  { cat: "Récupération (0 à 45' après)",
+    good: ["Dans les 30-45' : 20 g de protéines + glucides au ratio ~3:1 (skyr + fruits, ou plat Recettes)",
+      "Réhydrater jusqu'à retrouver des urines claires (+ une pincée de sel si transpiration abondante)",
+      "Anti-inflammatoires naturels au repas : fruits rouges, curcuma + poivre, gingembre, oméga-3 (noix, colza)"],
+    bad: ["Sauter la fenêtre de récupération « je mangerai plus tard » (resynthèse du glycogène divisée)",
+      "Alcool juste après l'effort (vide les réserves de glycogène)",
+      "Grignotage sucré sans protéines"],
+    why: "La fenêtre des 45' est le meilleur rapport effort/bénéfice de toute la nutrition du coureur. Après, on reconstruit à peine." },
+  { cat: "Crampes & acidité musculaire",
+    good: ["Sodium régulier en course (sel, bouillon, compotes salées) et potassium quotidien (banane, dattes, abricots secs)",
+      "Magnésium par l'alimentation : oléagineux, céréales complètes, légumes verts",
+      "Départs progressifs : l'acidité (lactate) vient de l'intensité, pas de l'assiette — monter doucement les allures",
+      "Échauffement 10-15' avant toute séance qualité (SQ1-SQ4)"],
+    bad: ["Départ trop violent (la cause n°1 de l'acidose ressentie dans les muscles)",
+      "Déshydratation : crampes et acidité aggravées",
+      "Chargement en sel uniquement le jour J sans l'avoir testé",
+      "Compléments « anti-acide » miracles : aucun ne fait mieux que progressivité + hydratation + glucides"],
+    why: "Aucun aliment n'« efface » l'acide lactique : il se recycle en carburant dès que l'allure retombe. Ce qui marche : partir doucement, boire, recharger en glucides — et assiette quotidienne peu acidifiante pour récupérer plus vite." },
+  { cat: "Tendons & articulations (essuie-glace, cheville)",
+    good: ["20-40 g de protéines à chaque repas (légumineuses, tofu, tempeh, skyr) : le tendon se construit avec",
+      "Collagène ou gélatine (10-15 g) + vitamine C (jus d'orange-citron) 30-60' autour des séances de renforcement/pliométrie",
+      "Vitamine C quotidienne : kiwi, agrumes, poivron cru, fruits rouges (synthèse du collagène)",
+      "Oméga-3 quotidiens : noix, graines de lin, huile de colza (inflammation maîtrisée)"],
+    bad: ["Protéines insuffisantes (le tendon ne se répare pas), régimes extrêmes ou yo-yo",
+      "Augmenter trop vite le volume de dénivelé négatif (règle du plan : +10-15 % par mois maximum)",
+      "Courir sur un tendon déjà douloureux > 3/10 deux séances de suite (règle de la douleur du plan)"],
+    why: "Le tendon est un tissu lent : il adore la routine (charge progressive régulière) et les apports constants, pas les cures." }
+];
+
+/* ================= recettes (onglet Aide > Recettes) =================
+   Végétariennes par défaut (la viande reste possible ailleurs), sobres en
+   carbone : légumineuses, fruits de saison, séchés (transport sec), pas de
+   viande ni de fromage lourd. Pensées pour l'entraînement trail : avant,
+   pendant (transportable, testable en course), après (3:1, tendons). */
+const RECIPES = [
+  /* --- après l'effort : construire muscle + tendons (10) --- */
+  { cat: "renfort", title: "Dahl de lentilles corail aux épinards",
+    when: "Repas après séance (45' de préparation passive)", time: "25'",
+    ing: ["150 g lentilles corail", "1 oignon + 2 gousses d'ail", "200 g tomates concassées", "200 g épinards", "1 c.à.c curcuma + cumin", "Riz basmati complet"],
+    steps: ["Faire revenir oignon et ail, ajouter épices puis lentilles rincées et tomates.", "Couvrir d'eau, mijoter 20' jusqu'à ce que les lentilles fondent.", "Ajouter les épinards en fin de cuisson, saler.", "Servir sur riz complet."],
+    note: "~22 g de protéines + fer (épinards) absorbé grâce à la vitamine C des tomates. Les lentilles sont la protéine la plus sobre en CO2.", eco: "A" },
+  { cat: "renfort", title: "Tofu fumé curry-patate douce",
+    when: "Repas après séance", time: "30'",
+    ing: ["200 g tofu fumé", "300 g patate douce", "150 ml lait de coco léger", "curry, gingembre", "Riz ou millet"],
+    steps: ["Cuire la patate douce en cubes vapeur 15'.", "Poêler le tofu en dés, ajouter curry et gingembre.", "Ajouter patate douce et lait de coco, 10' à feu doux."],
+    note: "Protéines complètes du soja + beta-carotène. Le curry apporte de la curcumine (anti-inflammatoire) — poivrer pour l'absorption.", eco: "A" },
+  { cat: "renfort", title: "Chili végétarien aux trois haricots",
+    when: "Repas après séance ou veille de sortie longue (charge en glucides)", time: "35'",
+    ing: ["150 g haricots rouges", "150 g pois chiches", "100 g haricots noirs", "1 poivron, 1 oignon", "400 g tomates concassées", "paprika fumé, cumin", "Riz complet"],
+    steps: ["Faire revenir oignon et poivron, ajouter épices.", "Ajouter tomates et légumes secs (en conserve : rincés), mijoter 20'.", "Servir sur riz complet, coriandre fraîche."],
+    note: "Gros apport protéines + fibres. Si la séance qualité est le lendemain matin, le cuisiner la veille à midi (fibres plus tolérées).", eco: "A" },
+  { cat: "renfort", title: "Buddha bowl quinoa-pois chiches-avocat",
+    when: "Repas après séance", time: "20'",
+    ing: ["80 g quinoa", "150 g pois chiches", "1/2 avocat", "1 betterave cuite", "Graines de courge", "Huile d'olive-citron"],
+    steps: ["Cuire le quinoa 12-15'.", "Assembler tiède avec pois chiches rincés, betterave en dés, avocat.", "Vinaigrette citron-huile d'olive, graines de courge torréfiées."],
+    note: "Quinoa + pois chiches = protéines complètes sans viande. Betterave : nitrates naturels bénéfiques à l'endurance. C'est le « bol de récupération » végétarien recommandé par u-trail (quinoa, pois chiches, légumes rôtis, sauce tahini).", eco: "A", src: "u-trail.com" },
+  { cat: "renfort", title: "Omelette tofu-légumes + patate douce rôtie",
+    when: "Repas après séance (matin)", time: "20'",
+    ing: ["200 g tofu soyeux", "1 patate douce", "poivron, épinards", "curcuma + poivre", "Huile d'olive"],
+    steps: ["Rôtir la patate douce en quartiers 25' à 200°C (à avancer la veille).", "Écraser le tofu, poêler avec les légumes et le curcuma.", "Servir ensemble."],
+    note: "Version sans œuf de l'omelette : protéines légères et digestes, curcumine + poivre pour l'inflammation.", eco: "A" },
+  { cat: "renfort", title: "Pâtes complètes pois chiches-tomates (pasta e ceci)",
+    when: "Repas après séance ou veille de course", time: "20'",
+    ing: ["100 g pâtes complètes", "150 g pois chiches", "400 g tomates concassées", "ail, romarin", "parmesan végétal (levure maltée) optionnel"],
+    steps: ["Poêler l'ail et le romarin, ajouter tomates et pois chiches, 10'.", "Cuire les pâtes, mélanger, finir à la poêle avec un peu d'eau de cuisson."],
+    note: "Le classique italien du 3:1 : glucides des pâtes + protéines des pois chiches dans un seul plat. Digeste la veille d'une course.", eco: "A" },
+  { cat: "renfort", title: "Tempeh sauté brocolis-sésame, riz complet",
+    when: "Repas après séance", time: "25'",
+    ing: ["120 g tempeh", "200 g brocoli", "1 gousse d'ail", "sauce soja, graines de sésame", "Riz complet"],
+    steps: ["Vapeur le brocoli 6'.", "Poêler le tempeh en lamelles avec l'ail, déglacer à la sauce soja.", "Servir sur riz, sésame grillé."],
+    note: "Le tempeh (soja fermenté) : protéines bien assimilées + isoflavones. Brocoli = vitamine C et K pour le collagène et l'os.", eco: "A" },
+  { cat: "renfort", title: "Shot « tendons » : collagène + vitamine C",
+    when: "30-60' avant ou après la séance de renforcement / pliométrie (RM-A/B/C, corde)", time: "2'",
+    ing: ["10-15 g collagène hydrolysé ou gélatine alimentaire", "1 jus d'orange pressé (ou citron)", "200 ml d'eau"],
+    steps: ["Dissoudre le collagène dans l'eau tiède (il fond sans chauffe).", "Ajouter le jus d'orange-citron et boire."],
+    note: "Protocole classique de soutien du tendon : acides aminés (glycine, proline) + vitamine C au moment où le tendon travaille. À associer au travail excentrique progressif du plan, pas à la place.", eco: "B" },
+  { cat: "renfort", title: "Salade de lentilles vertes, feta, betterave et noix",
+    when: "Repas après séance (à préparer à l'avance)", time: "15' + repos",
+    ing: ["120 g lentilles vertes", "60 g feta", "1 betterave cuite", "Une poignée de noix", "vinaigrette moutarde-huile d'olive"],
+    steps: ["Cuire les lentilles 25' (ou la veille), laisser tiédir.", "Mélanger avec betterave en dés, noix, feta émiettée."],
+    note: "Fer + protéines, oméga-3 des noix. Se garde 3 jours au frais — pratique pour les semaines chargées.", eco: "A" },
+  { cat: "renfort", title: "Skyr-avoine-fruits rouges",
+    when: "Collation/repas après séance, dans les 45'", time: "3'",
+    ing: ["250 g skyr ou fromage blanc épais", "30 g flocons d'avoine", "100 g fruits rouges (surgelés acceptés)", "1 c.à.s miel", "1 noix concassée"],
+    steps: ["Mélanger skyr et flocons, laisser reposer 5'.", "Ajouter fruits rouges, miel, noix."],
+    note: "20-25 g de protéines rapides + le ratio 3:1 avec les fruits. Les fruits rouges (anthocyanes) limitent les douleurs musculaires post-effort.", eco: "A" },
+
+  /* --- compotes énergétiques pendant la course (6) --- */
+  { cat: "compote", title: "Purée de dattes-pomme-citron (la base)",
+    when: "Pendant l'effort, en gourde souple — 1 portion = ~30 g de glucides", time: "15'",
+    ing: ["200 g dattes dénoyautées", "300 g pommes", "Jus d'un citron", "1 pincée de sel"],
+    steps: ["Mixer les dattes avec un peu d'eau chaude.", "Ajouter les pommes crues mixées (ou compotées 10') et le citron.", "Répartir en gourdes souples de ~80 g."],
+    note: "~65 g de glucides/100 g : l'équivalent d'un gel, avec potassium et fibres douces. Se garde 4-5 jours au frais, se congèle en portions.", eco: "A", src: "Nicolas Aubineau (variations)" },
+  { cat: "compote", title: "Compote énergétique pomme-lait de soja (référence du diététicien)",
+    when: "Pendant l'effort — 1 portion de 200-250 g = ~42 g de glucides", time: "35'",
+    ing: ["6 pommes", "1/2 L de lait de soja nature", "150 g de sucre complet", "2 c.à.c extrait de vanille", "2 c.à.c extrait de café", "4 pincées de fleur de sel"],
+    steps: ["Éplucher, épépiner, couper les pommes en morceaux.", "Porter à ébullition lait de soja + sucre + extraits, ajouter les pommes, cuire 30' à feu doux en remuant.", "Mixer lisse, verser en flasques ou gourdes souples."],
+    note: "La recette de référence de Nicolas Aubineau (diététicien nutritionniste) : ~202 kcal et 41,7 g de glucides par compote, sodium (95 mg) et potassium (280 mg) inclus. Version volontairement liquide (facile à assimiler) ; ajouter du sel par grosse chaleur. Se conserve plusieurs jours au frais.", eco: "A", src: "nicolas-aubineau.com" },
+  { cat: "compote", title: "Compote salée patate douce-carotte (l'alternative aux gels)",
+    when: "Pendant l'effort long — quand le sucré écœure ; 1 gourde/h au-delà de 2 h", time: "30'",
+    ing: ["300 g patate douce", "150 g carotte", "30 g sirop de riz (ou 20 g maltodextrine)", "50 g crème d'avoine en poudre", "1/4 c.à.c sel marin", "curcuma + gingembre"],
+    steps: ["Cuire les légumes vapeur 20-30', bien égoutter.", "Mixer chauds avec sirop de riz, crème d'avoine, sel et épices jusqu'à une purée lisse.", "Rectifier l'assaisonnement après refroidissement (la texture s'épaissit), remplir les gourdes à 80 %."],
+    note: "Recette Mulebar : ~65 g = 25-30 g de glucides et 300-400 mg de sodium — parfait quand le sucré écœure. Prendre en petites gorgées toutes les 15' ; sur ultra, alterner compote sucrée et salée toutes les 50'. Frigo 2-3 jours, congélateur 1-3 mois.", eco: "A", src: "mulebar.com" },
+  { cat: "compote", title: "Compote pomme-châtaigne-miel",
+    when: "Pendant l'effort — 1 portion = ~28 g de glucides", time: "10'",
+    ing: ["200 g compote de pomme nature", "90 g crème de châtaigne", "30 g miel", "1 pincée de sel"],
+    steps: ["Mélanger tous les ingrédients à froid jusqu'à consistance lisse.", "Verser dans une flasque ou gourde souple — se consomme en plusieurs prises."],
+    note: "Recette Raidlight : 113 kcal et 28 g de glucides par portion, très digeste. La châtaigne apporte des glucides complexes ; prête en 10 minutes.", eco: "A", src: "raidlight.com" },
+  { cat: "compote", title: "Compote patate douce-orange-érable",
+    when: "Pendant l'effort (le « solide » des ultras)", time: "20'",
+    ing: ["400 g patate douce", "1 orange (zeste + jus)", "2 c.à.s sirop d'érable", "1 pincée de sel", "cannelle"],
+    steps: ["Cuire la patate douce vapeur 20', écraser.", "Ajouter orange, érable, sel, cannelle ; mixer lisse."],
+    note: "Le carburant solide des coureurs d'ultra : digère mieux que le sucre pur sur la durée. Bêta-carotène inclus. Cousine de la « sweet potato mash » salée Raidlight (300 g patate douce + 10 g huile d'olive + 4 g sel) pour les goûts salés.", eco: "A", src: "raidlight.com (variante)" },
+  { cat: "compote", title: "Compote pomme-banane-miel-sel",
+    when: "Pendant l'effort", time: "15'",
+    ing: ["3 pommes", "2 bananes mûres", "2 c.à.s miel", "1 pincée de sel"],
+    steps: ["Compoter les pommes 10' à couvert.", "Hors du feu, écraser les bananes, ajouter miel et sel, mixer."],
+    note: "Potassium de la banane + sodium du sel : le duo anti-crampes. Moins sucrée que la purée de dattes — parfaite sur sortie longue en alternance avec la compote salée.", eco: "A", src: "—" },
+
+  /* --- juste avant la course (6) --- */
+  { cat: "avant", title: "Porridge avoine-dattes-chia-beurre d'amande",
+    when: "Petit-déjeuner pré-course (u-trail) ou 45-60' avant", time: "5'",
+    ing: ["40 g flocons d'avoine", "3 dattes émincées", "1 c.à.s graines de chia", "1 c.à.c beurre d'amande", "200 ml boisson d'amande ou lait", "cannelle"],
+    steps: ["Micro-ondes 2-3' avec la boisson.", "Ajouter dattes, chia, beurre d'amande, cannelle ; laisser reposer 2'."],
+    note: "Le petit-déjeuner végétarien de référence des traileurs (u-trail) : ~45 g de glucides à libération progressive, oméga-3 du chia. Rien de nouveau le jour J : le tester d'abord sur les sorties longues.", eco: "A", src: "u-trail.com" },
+  { cat: "avant", title: "Pancakes avoine-banane (3 ingrédients)",
+    when: "45-60' avant une séance qualité", time: "10'",
+    ing: ["1 banane mûre", "40 g flocons d'avoine mixés", "1 œuf (ou 1 c.à.s de lin moulu + 3 c.à.s d'eau)"],
+    steps: ["Écraser la banane, mélanger le tout.", "Cuire des petits pancakes 2' par face à la poêle sèche."],
+    note: "20-30 g de glucides, léger. Version du « snack 1-2 h avant » de menu-vegetarien.com ; à tester à l'entraînement avant d'en faire le petit-déj du jour J.", eco: "A", src: "menu-vegetarien.com (timing)" },
+  { cat: "avant", title: "Tartines purée d'amande-miel",
+    when: "30-45' avant", time: "2'",
+    ing: ["2 tranches pain complet", "2 c.à.c purée d'amande", "1 c.à.s miel"],
+    steps: ["Tartiner, manger lentement, boire un verre d'eau avec."],
+    note: "Le duo rapide avant une sortie courte du matin : 25 g de glucides sans poids dans l'estomac. Banane + beurre d'amande = le snack 1-2 h avant conseillé par menu-vegetarien.com.", eco: "A", src: "menu-vegetarien.com" },
+  { cat: "avant", title: "Smoothie banane-fruits rouges-épinards",
+    when: "1-2 h avant, quand l'appétit manque", time: "3'",
+    ing: ["1 banane", "1 poignée de fruits rouges", "1 poignée d'épinards frais", "2 dattes", "250 ml lait d'amande"],
+    steps: ["Mixer le tout 30 secondes."],
+    note: "Liquide = vidange gastrique rapide : le snack pré-course de menu-vegetarien.com (épinards pour les nitrates, banane pour le potassium). ~40 g de glucides à index glycémique modéré.", eco: "A", src: "menu-vegetarien.com" },
+  { cat: "avant", title: "Gâteau sportif pré-course (sport cake)",
+    when: "Petit-déjeuner avant course ou sortie longue — cuit la veille", time: "10' + 50' de four",
+    ing: ["200 g farine (sans gluten si besoin)", "80 g protéines végétales en poudre", "60 g graines de chia moulues", "40 g huile d'olive", "80 g miel", "80 g pépites de chocolat", "500 g boisson végétale", "1/2 sachet de levure", "4 g sel"],
+    steps: ["Mélanger tous les ingrédients.", "Cuire 50' à 180°C dans un moule à cake."],
+    note: "Le « sport cake » Raidlight : énergétique et digeste, riche en protéines (26,9 g et 84,5 g de glucides par part) — le petit-déjeuner de compétition de beaucoup de traileurs. Se congèle en tranches.", eco: "B", src: "raidlight.com" },
+  { cat: "avant", title: "Riz au lait-dattes de la veille",
+    when: "Avant une sortie longue (préparé la veille)", time: "5' le matin",
+    ing: ["Riz cuit de la veille (100 g)", "150 ml lait d'amande", "2 dattes", "cannelle"],
+    steps: ["Réchauffer riz + lait + dattes émincées 4'.", "Cannelle à volonté."],
+    note: "Les coureurs de fond re-découvrent le riz avant course : digère mieux que le blé pour beaucoup d'estomacs.", eco: "A", src: "—" },
+
+  /* --- barres pendant la course (6) --- */
+  { cat: "barre", title: "Barres dattes-cacao-noisettes",
+    when: "Pendant l'effort — 1 barre ≈ 25-30 g de glucides", time: "15' + 1 h au frais",
+    ing: ["250 g dattes dénoyautées", "100 g noisettes", "2 c.à.s cacao", "1 pincée de sel"],
+    steps: ["Mixer noisettes puis dattes en pâte — sans trop insister, garder du grain.", "Pétrir avec cacao et sel, presser fermement dans un moule, laisser reposer 1 h au frais avant de trancher."],
+    note: "La barre de référence : dense, tient dans la poche, se coupe en bouchées. Cacao = magnésium. Règle de terrain (reference-trail) : bien presser la pâte, laisser le temps de repos, ne pas trop mixer — sinon la barre s'effrite.", eco: "A", src: "reference-trail.fr (méthode)" },
+  { cat: "barre", title: "Barres traileur noix-pistaches-gingembre-citron",
+    when: "Pendant l'effort long — la barre « digestion facile » testée sur ultras", time: "20' + 1 h au frais",
+    ing: ["50 g amandes entières", "100 g noix mélangées (cajou, pécan, Grenoble)", "50 g pistaches", "100 g dattes dénoyautées", "2 c.à.s poudre de cacao maigre", "2 c.à.s éclats de fèves de cacao", "2 c.à.s huile de coco fondue", "1 c.à.s gingembre en poudre", "1 c.à.s écorces de citron en poudre", "4 pincées de sel"],
+    steps: ["Mixer grossièrement noix, amandes, pistaches (texture granuleuse, pas en poudre).", "Ajouter dattes, cacao, fèves de cacao, huile de coco, gingembre, citron, sel ; pétrir.", "Presser très fermement dans un plat, 1 h au frais, trancher en 12 barres."],
+    note: "La recette testée 3 ans sur tous ses trails par Quentin André (reference-trail) : ~0,45 € la barre, naturellement sans gluten, riches en potassium (pistaches), magnésium (cacao) et anti-inflammatoire (gingembre). Variantes : plus de dattes en ultra-distance, moins de fibres pour digestion facile.", eco: "A", src: "reference-trail.fr" },
+  { cat: "barre", title: "Flapjacks avoine-miel",
+    when: "Pendant l'effort ou au ravito", time: "25'",
+    ing: ["200 g flocons d'avoine", "100 g miel", "60 g beurre de cacahuète", "1 pincée de sel"],
+    steps: ["Chauffer miel + beurre de cacahuète, mélanger aux flocons.", "Presser dans un plat, four 15' à 160°C, couper froid."],
+    note: "Riche et tenace : la barre « solide » qui rassasie sur les ultras. Moins collante à froid qu'à la chaleur.", eco: "A", src: "—" },
+  { cat: "barre", title: "Barres avoine-noix de pécan-canneberges (cuites, style u-trail)",
+    when: "Pendant l'effort ou au ravito maison", time: "35'",
+    ing: ["3 verres de flocons d'avoine", "2 verres de noix de pécan", "1/2 verre de canneberges séchées", "1,5 verre de dattes dénoyautées", "1 verre d'amandes", "1/4 de verre d'huile de colza", "1/2 verre de sirop d'érable", "1/4 de verre de vergeoise brune (ou sucre roux)", "3 pincées de sel", "1 c.à.c bicarbonate (facultatif)"],
+    steps: ["Mixer les noix, verser dans un saladier avec avoine, sel et bicarbonate.", "Mixer les amandes avec l'huile de colza pour une pâte lisse ; ajouter sucre, dattes et sirop d'érable.", "Mélanger le tout, étaler dans un plat, four 30' à 160°C, découper après refroidissement."],
+    note: "La recette u-trail (par verres, sans balance) : avoine pour l'énergie progressive, noix de pécan et colza pour les oméga-3, canneberges pour l'acidité qui relance l'appétit en course.", eco: "A", src: "u-trail.com" },
+  { cat: "barre", title: "Barres croustillantes riz-amandes",
+    when: "Pendant l'effort (estomac facile)", time: "15'",
+    ing: ["100 g riz soufflé", "50 g amandes concassées", "80 g miel ou sirop d'érable", "1 pincée de sel"],
+    steps: ["Chauffer le miel, mélanger au riz soufflé et amandes.", "Presser, trancher, laisser durcir."],
+    note: "Très digeste (peu de fibres) : à privilégier quand l'estomac se ferme en course. Moins dense : prévoir 2 barres/heure de ravito.", eco: "A", src: "runchallenge.fr (principe)" },
+  { cat: "barre", title: "Barres banane-avoine-coco",
+    when: "Pendant l'effort", time: "25'",
+    ing: ["2 bananes très mûres", "150 g flocons d'avoine", "30 g noix de coco râpée", "1 pincée de sel"],
+    steps: ["Écraser les bananes, mélanger tout.", "Étaler 1 cm, four 15' à 180°C, couper en barres."],
+    note: "La plus « gâteau » des barres — bonne pour l'envie de vrai food en course. Se garde 4 jours.", eco: "A", src: "—" },
+
+  /* --- les meilleures recettes après la course (5) --- */
+  { cat: "apres", title: "Boisson de récupération dattes-skyr",
+    when: "Dans les 30' suivant l'effort — la plus importante de la journée", time: "2'",
+    ing: ["200 g skyr", "3 dattes", "200 ml d'eau", "1 pincée de sel"],
+    steps: ["Mixer le tout 30 secondes, boire frais."],
+    note: "Le 3:1 en buvant, quand l'appétit manque après l'effort. Glucides des dattes + 20 g de protéines du skyr + sodium. À garder au frais prête dans le sac pour les sorties longues.", eco: "A" },
+  { cat: "apres", title: "Riz au lait d'amande-dattes-cannelle",
+    when: "Repas après sortie longue", time: "20' (+ cuisson du riz)",
+    ing: ["100 g riz rond cuit", "300 ml lait d'amande", "3 dattes", "cannelle", "20 g amandes concassées"],
+    steps: ["Mijoter riz et lait 15'.", "Hors du feu : dattes émincées, cannelle, amandes."],
+    note: "Recharge glucides douce après les efforts longs ; digère bien même fatigué. Les amandes ramènent les oméga-3.", eco: "A" },
+  { cat: "apres", title: "Wrap houmous-crudités",
+    when: "Déjeuner après séance du midi (SQ, EP)", time: "5'",
+    ing: ["1 galette complète", "80 g houmous", "carotte, concombre, salade", "graines germées optionnelles"],
+    steps: ["Tartiner la galette de houmous, ajouter les crudités, rouler."],
+    note: "Les pois chiches du houmous font protéines ET glucides : un wrap suffit pour la fenêtre de récupération du mid-runner.", eco: "A" },
+  { cat: "apres", title: "Pâtes complètes-lentilles-tomates express",
+    when: "Dîner après séance", time: "20'",
+    ing: ["80 g pâtes complètes", "70 g lentilles vertes précuites (ou conserve)", "300 g tomates concassées", "ail, laurier"],
+    steps: ["Réchauffer tomates + lentilles + ail 10'.", "Mélanger aux pâtes cuites, huile d'olive crue."],
+    note: "Le dîner 3:1 du coureur, en 20 minutes : glycogène pour la séance du lendemain + protéines pour la nuit.", eco: "A" },
+  { cat: "apres", title: "Smoothie vert banane-épinards-dattes",
+    when: "Collation après séance, avant le repas", time: "3'",
+    ing: ["1 banane", "2 poignées d'épinards frais", "2 dattes", "250 ml d'eau", "Jus d'un demi-citron"],
+    steps: ["Mixer le tout, boire de suite."],
+    note: "Nitrates des épinards (oxygénation), potassium banane, vitamine C du citron pour le collagène. Complément du vrai repas qui suit, pas un substitut.", eco: "A" }
+];
+const RECIPE_CATS = [
+  { id: "renfort", label: "Muscle & tendons — après l'effort", when: "à manger après une séance de renforcement, corde ou pliométrie" },
+  { id: "compote", label: "Compotes énergétiques — pendant la course", when: "en gourde souple, à tester sur chaque sortie longue" },
+  { id: "avant", label: "Juste avant la course", when: "20-45' avant le départ" },
+  { id: "barre", label: "Barres — pendant la course", when: "1 barre ≈ 25-30 g de glucides, dans la poche" },
+  { id: "apres", label: "Meilleures recettes après la course", when: "dans la fenêtre des 30-45'" }
+];
+
+/* ================= conseils post-exercice (popup fin de séance) =================
+   Affiché à la fin d'un exercice (minuteur ou routine guidée) : récupération
+   immédiate, étirements, et quoi/quand manger. Aligné sur les règles du plan. */
+const POSTEXO = {
+  now: ["Marche 5' ou vélo très léger pour redesouffler — jamais à l'arrêt brutal.",
+    "Si la séance était intense : 5' d'automassage doux fessier / TFL / essuie-glace."],
+  stretch: ["Étirements doux 20-30'' par groupe, sans forcer : mollets, quadriceps, ischio, fessiers, psoas.",
+    "Sur tendon sensible (essuie-glace, cheville > 3/10) : pas d'étirement agressif — glace 10-15' et voir la règle de la douleur du plan.",
+    "Gainage léger ou proprioception 5' si tu es frais : toujours rentable pour la cheville."],
+  food: ["Dans les 30-45' : ~20 g de protéines + glucides ratio 3:1 (ex. skyr-avoine-fruits, boisson dattes-skyr — voir onglet Recettes).",
+    "Bois avant d'avoir soif : réhydrate jusqu'à urines claires ; par grosse chaleur, un peu de sel avec l'eau.",
+    "Si renforcement / pliométrie / corde : 10-15 g de collagène ou gélatine + vitamine C (jus d'orange) autour de la séance — le tendon en profite.",
+    "Jamais d'ibuprofène autour de l'effort ; anti-inflammatoires naturels au repas suivant : fruits rouges, curcuma-poivre, oméga-3."],
+  warn: "Douleur vive pendant ou après : ce n'est pas normal — ajuste la séance (règle du plan : douleur > 3/10 deux séances de suite => alléger, kiné si ça persiste)."
+};

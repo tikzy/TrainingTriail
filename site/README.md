@@ -40,6 +40,16 @@ géolocalisation GPS en direct, les navigateurs exigent HTTPS ou localhost :
 Sur mobile, utiliser plutôt l'import de fichier GPX exporté depuis une montre
 ou une application GPS si l'enregistrement direct n'est pas pratique.
 
+### Montre Polar (Vantage M3)
+
+Avec le worker Cloudflare, la montre se connecte directement (Réglages →
+Montre Polar) : les sorties sont importées automatiquement via l'API officielle
+Polar AccessLink, trace GPX et D+ compris, avec FC moy/max et Running Index.
+La vue Aujourd'hui affiche aussi une carte « Récupération » (sommeil, recharge
+ANS/VFC, charge cardio) alimentée par la montre. Sans worker, exporter les GPX
+depuis Polar Flow et les importer dans l'onglet Sorties. Mise en place : voir
+`deploy/worker/README.md`.
+
 ## Fonctions
 
 - **Aujourd'hui** : séances du jour à cocher, aperçu de la semaine, compte à rebours,

@@ -6,3 +6,11 @@ CREATE TABLE IF NOT EXISTS state (
   json TEXT NOT NULL,
   updated_at INTEGER NOT NULL DEFAULT 0
 );
+
+-- Jeton OAuth Polar AccessLink de l'utilisateur unique (jamais envoyé au navigateur).
+-- json : { memberId, accessToken, xUserId, connectedAt, lastSync, pendingState }
+CREATE TABLE IF NOT EXISTS polar (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0
+);

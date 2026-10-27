@@ -10,7 +10,7 @@ let state = {
   hidden: {},     // clé "w-d-i" -> true : séance du programme masquée (onglet Semaine)
   custom: [],     // séances ajoutées : [{ id, w, d, c, t, m }]
   timers: {},     // minuteurs standard enregistrés : { exoId: { work, rest, reps, sets, setrest } }
-  profile: null, // profil coureur : { fcm, repos, poids, vma } — alimente zones et coach
+  profile: null, // profil coureur : { fcm, repos, poids, vma, vo2 } — alimente zones et coach
   loads: {},     // dernière charge de renforcement par exercice : { exoId: { kg, reps, date } }
   daily: {},     // quotidiennes cochées : { "YYYY-MM-DD": { PROP: true, MAS: true } } — hors volume
   notes: {},     // notes personnelles par semaine : { "S12": "..." }
@@ -23,7 +23,10 @@ let state = {
   seq: 1,
   lastWeekView: null,
   mistral: { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" },
-  chat: []        // conversation coach : [{role, content}]
+  polar: { connected: false, lastSync: null }, // montre Polar : connectée au worker (jeton côté serveur)
+  polarNights: {}, // nuits Polar : { "YYYY-MM-DD": { slp:{score,dur,deep,rem,cont}, rec:{ans,hrv,br,hr,st}, load:{v,str,tol,st} } }
+  convs: [],      // conversations du coach : [{ id, title, created, msgs: [{id, ts, role, content, display?}] }]
+  convId: null    // conversation affichée (navigation ◀ ▶)
 };
 
 let storageWarned = false;
@@ -77,7 +80,37 @@ function normalizeState() {
   if (!state.shoes) state.shoes = [];
   if (state.lastShoeId == null) state.lastShoeId = null;
   if (!state.mistral) state.mistral = { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" };
-  if (!state.chat) state.chat = [];
+  if (!state.polar) state.polar = { connected: false, lastSync: null };
+  if (!state.polarNights) state.polarNights = {};
+  /* conversations du coach : chaque message reçoit un id (les anciens sans id
+     gardent leur ordre en tête via des id négatifs) — la fusion inter-appareils
+     se fait par id, une conversation n'est jamais écrasée par un autre appareil */
+  if (!Array.isArray(state.convs)) state.convs = [];
+  /* migration unique de l'ancien state.chat -> conversation « Ancienne conversation »
+     (state.chat est ensuite supprimé : la migration ne se rejoue pas) */
+  const legacy = normalizeMsgs(Array.isArray(state.chat) ? state.chat : []);
+  if (legacy.length && !state.convs.some(c => c.id === 0))
+    state.convs.push({ id: 0, title: "Ancienne conversation", created: 0, msgs: legacy });
+  delete state.chat;
+  state.convs.forEach(c => {
+    if (!c || typeof c !== "object") return;
+    c.title = c.title || "Conversation";
+    c.created = c.created || 0;
+    c.msgs = normalizeMsgs(Array.isArray(c.msgs) ? c.msgs : []);
+  });
+  state.convs = state.convs.filter(c => c && typeof c === "object").sort((x, y) => x.id - y.id);
+  if (!state.convs.some(c => c.id === state.convId))
+    state.convId = state.convs.length ? state.convs[state.convs.length - 1].id : null;
+}
+/* normalise une liste de messages : objets, id (négatifs pour les anciens,
+   ordre conservé), ts. Utilisé par normalizeState et la fusion. */
+function normalizeMsgs(msgs) {
+  msgs.forEach((m, i) => {
+    if (!m || typeof m !== "object") msgs[i] = { role: "user", content: String(m) };
+    if (msgs[i].id == null) msgs[i].id = -(msgs.length - i);
+    if (msgs[i].ts == null) msgs[i].ts = 0;
+  });
+  return msgs;
 }
 load();
 
@@ -346,26 +379,61 @@ function weekProgressPct() {
 function totalPlannedMin() { let s = 0; for (let n = 1; n <= WEEKS.length; n++) s += plannedMinutes(n); return s; }
 function totalRealizedMin() { let s = 0; for (let n = 1; n <= WEEKS.length; n++) s += realizedMinutes(n); return s; }
 
-/* ================= navigation ================= */
+/* ================= navigation : onglets groupés + sous-onglets ================= */
+const NAV = {
+  today: { label: "Accueil", subs: [["today", "Aujourd'hui"]] },
+  sessions: { label: "Sessions", subs: [["new", "Nouveau"], ["sessions", "Séances"], ["traces", "Traces"], ["stats", "Résumé"]] },
+  "program-group": { label: "Programme", subs: [["summary", "Résumé"], ["semaine", "Semaine"], ["program", "Plan 29 semaines"], ["progress", "Progression"]] },
+  aide: { label: "Aide", subs: [["food", "Nutrition"], ["recipes", "Recettes"], ["exercises", "Exercices"], ["conseil", "Conseils"], ["coach", "Coach IA"]] },
+  params: { label: "Paramètres", subs: [["shoes", "Chaussures"], ["settings", "Réglages"]] }
+};
+const VIEW_GROUP = {};
+Object.keys(NAV).forEach(g => NAV[g].subs.forEach(s => { VIEW_GROUP[s[0]] = g; }));
+let curView = "today";
+const NAV_LAST_SUB = {}; // dernier sous-onglet visité de chaque groupe
+function activateView(name) {
+  if (!$("#view-" + name)) name = "today";
+  curView = name;
+  NAV_LAST_SUB[VIEW_GROUP[name] || "today"] = name;
+  const group = VIEW_GROUP[name] || "today";
+  $$("nav#tabs button").forEach(b => b.classList.toggle("active", b.dataset.view === group));
+  /* barre de sous-onglets (uniquement pour les groupes à plusieurs vues) */
+  const st = $("#subtabs");
+  if (st) {
+    const subs = NAV[group].subs;
+    if (subs.length > 1) {
+      st.style.display = "";
+      st.innerHTML = subs.map(s => '<button data-sub="' + s[0] + '"' + (s[0] === name ? ' class="active"' : "") + ">" + esc(s[1]) + "</button>").join("");
+      $$("#subtabs button").forEach(b => b.addEventListener("click", () => activateView(b.dataset.sub)));
+    } else { st.style.display = "none"; st.innerHTML = ""; }
+  }
+  $$(".view").forEach(v => v.classList.remove("active"));
+  $("#view-" + name).classList.add("active");
+  renderView(name);
+  window.scrollTo(0, 0);
+}
+function showView(name) { activateView(VIEW_GROUP[name] ? name : "today"); }
+/* clic sur un onglet principal : ouvre le dernier sous-onglet visité du groupe */
 $$("nav#tabs button").forEach(btn => {
   btn.addEventListener("click", () => {
-    $$("nav#tabs button").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    $$(".view").forEach(v => v.classList.remove("active"));
-    $("#view-" + btn.dataset.view).classList.add("active");
-    renderView(btn.dataset.view);
-    window.scrollTo(0, 0);
+    const g = btn.dataset.view;
+    activateView(NAV_LAST_SUB[g] || NAV[g].subs[0][0]);
   });
 });
-function showView(name) { $$('nav#tabs button[data-view="' + name + '"]').forEach(b => b.click()); }
 
 
 function renderView(name) {
   if (name === "today") renderToday();
+  else if (name === "summary") renderSummary();
   else if (name === "semaine") renderSemaine();
   else if (name === "program") renderProgram();
+  else if (name === "food") renderFood();
+  else if (name === "recipes") renderRecipes();
   else if (name === "exercises") renderExercises();
-  else if (name === "runs") renderRuns();
+  else if (name === "new") renderNew();
+  else if (name === "sessions") renderSessions();
+  else if (name === "traces") renderTraces();
+  else if (name === "stats") renderStats();
   else if (name === "shoes") renderShoes();
   else if (name === "progress") renderProgress();
   else if (name === "conseil") renderConseil();
@@ -571,14 +639,100 @@ function renderConseil() {
   let html = "<h2>Conseils</h2>" +
     '<div class="muted small">Fondés sur la bibliographie ultratrail (Koop <i>Training Essentials for Ultrarunning</i>, Koerner <i>Field Guide</i>, Sharman <i>The Art of Ultrarunning</i>, Garza-Hillman <i>Ultrarunning for Normal People</i>) et sur les règles de ton plan. Pour un cas particulier, demande au coach IA.</div>' +
     (bnote ? '<div class="note plan-warnings">' + esc(bnote) + "</div>" : "") +
-    (focus.length ? '<div class="note">Bloc actuel : ' + esc(blk.name) + " — catégories les plus utiles maintenant surlignées ci-dessous.</div>" : "");
+    (focus.length ? '<div class="note">Bloc actuel : ' + esc(blk.name) + " — les catégories utiles maintenant sont ouvertes et marquées ci-dessous.</div>" : "");
   if (isPrepWeek(w)) html += '<div class="note plan-warnings">Semaine de course préparatoire : pars volontairement prudent (l\'allure à tenir doit sembler lente), répète exactement le matériel et le ravito du jour J, et repars de chaque ravito en moins de 2 minutes.</div>';
   TIPS.forEach(cat => {
     const hot = focus.includes(cat.cat);
-    html += "<h3" + (hot ? " class='tip-focus'" : "") + ">" + esc(cat.cat) + (hot ? ' <span class="badge light">utile maintenant</span>' : "") + "</h3>" +
-      '<div class="tip-list">' + cat.tips.map(t => '<div class="tip">' + esc(t) + "</div>").join("") + "</div>";
+    html += '<details class="shutter"' + (hot ? " open" : "") + '>' +
+      '<summary>' + esc(cat.cat) + (hot ? ' <span class="badge light">utile maintenant</span>' : "") + "</summary>" +
+      '<div class="tip-list">' + cat.tips.map(t => '<div class="tip">' + esc(t) + "</div>").join("") + "</div></details>";
   });
   $("#view-conseil").innerHTML = html;
+}
+
+/* ================= vue : programme — résumé ================= */
+function renderSummary() {
+  const w = currentWeek(), blk = blockOf(w);
+  const j = Math.max(0, daysBetween(isoDate(new Date()), RACE.date));
+  let html = "<h2>Programme — résumé</h2>" +
+    '<div class="hero"><div><div class="hero-date">' + esc(RACE.name) + " — " + RACE.dist + " km · " + RACE.dplus + " m D+</div>" +
+    "<h2>J−" + j + " · Semaine " + w + " — " + esc(blk.name) + "</h2>" +
+    '<div class="muted">' + esc(RACE.date + " · " + RACE.city) + " · 29 semaines · 5 blocs · " + esc(RACE.note) + "</div></div>" +
+    '<div class="hero-weekbar">' + weekBar(w) + "</div></div>";
+  /* avance globale */
+  const plan = totalPlannedMin(), done = totalRealizedMin();
+  const km = state.runs.reduce((s, r) => s + (r.dist || 0), 0);
+  const dp = state.runs.reduce((s, r) => s + (r.dplus || 0), 0);
+  html += '<div class="stat-cards">' +
+    '<div class="stat"><span>' + Math.round(100 * done / Math.max(1, plan)) + ' %</span><label>programme réalisé (' + fmtHours(done) + " / " + fmtHours(plan) + " h)</label></div>" +
+    '<div class="stat"><span>' + km.toFixed(0).replace(".", ",") + '</span><label>km enregistrés</label></div>' +
+    '<div class="stat"><span>' + dp + '</span><label>m D+ enregistrés</label></div>' +
+    '<div class="stat"><span>' + state.runs.length + '</span><label>sorties</label></div>' +
+    "</div>";
+  /* les 5 blocs */
+  html += "<h3>Les 5 blocs du plan</h3><div class='day-card'>";
+  BLOCKS.forEach(b => {
+    const weeks = WEEKS.filter(wk => blockOf(wk.n).name === b.name);
+    if (!weeks.length) return;
+    const nums = weeks.map(wk => wk.n);
+    const inBlock = w >= nums[0] && w <= nums[nums.length - 1];
+    const bDone = weeks.reduce((s, wk) => s + doneMinutes(wk.n), 0);
+    const bPlan = weeks.reduce((s, wk) => s + plannedMinutes(wk.n), 0);
+    html += '<div class="block-row' + (inBlock ? " cur" : "") + '">' +
+      '<span class="block-dot" style="background:' + b.color + '"></span>' +
+      '<div><b>' + esc(b.name) + "</b> — S" + nums[0] + " à S" + nums[nums.length - 1] +
+      ' <span class="muted">· ' + fmtHours(bPlan) + " h planifiées · " + Math.round(100 * bDone / Math.max(1, bPlan)) + " % réalisés</span>" +
+      (inBlock ? ' <span class="badge light">en cours</span>' : "") +
+      (b.desc ? '<div class="muted small">' + esc(b.desc) + "</div>" : "") +
+      "</div></div>";
+  });
+  html += "</div>";
+  html += '<div class="note">' + esc("Progression 3+1 : les semaines allégées sont S4, S8, S12, S16, S20, S24 — on ne les charge jamais. Affûtage S26-S29 (affûtage rapide de Koop) : jamais de charge non plus.") + "</div>";
+  $("#view-summary").innerHTML = html;
+}
+
+/* ================= vue : nutrition (feuille manger / éviter) ================= */
+function renderFood() {
+  let html = "<h2>Nutrition — quoi manger, quoi éviter</h2>" +
+    '<div class="muted small">Synthèse pratique pour la préparation trail : récupération, acidité musculaire, crampes, tendons. Régime majoritairement végétarien et sobre en carbone. Les recettes prêtes à cuisiner sont dans le sous-onglet Recettes.</div>';
+  FOOD_SHEET.forEach(sec => {
+    html += '<div class="food-sheet"><h3>' + esc(sec.cat) + "</h3>" +
+      '<div class="food-cols">' +
+      '<div class="food-col good"><h4>✓ À privilégier</h4><ul>' + sec.good.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+      '<div class="food-col bad"><h4>✕ À limiter / éviter</h4><ul>' + sec.bad.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+      "</div>" +
+      '<div class="food-why">' + esc(sec.why) + "</div></div>";
+  });
+  html += "<h3>Les 5 règles d'or</h3><div class='tip-list'>" +
+    NUTRITION_TIPS.map(t => '<div class="tip">' + esc(t) + "</div>").join("") + "</div>";
+  $("#view-food").innerHTML = html;
+}
+
+/* ================= vue : recettes ================= */
+let recipeCat = "renfort";
+function renderRecipes() {
+  let html = "<h2>Recettes du coureur trail</h2>" +
+    '<div class="muted small">Végétariennes et sobres en carbone : légumineuses, céréales complètes, fruits de saison et séchés. Chaque recette indique quand la manger et ce qu\'elle apporte. Règle d\'or : tout doit être testé à l\'entraînement, rien de nouveau le jour J.</div>' +
+    '<div class="muted small">Sources des recettes de terrain : <a href="https://www.nicolas-aubineau.com/compote-energetique-sport/" target="_blank" rel="noopener">Nicolas Aubineau</a> (diététicien) · <a href="https://mulebar.com/blogs/news/compote-energetique-salee-maison" target="_blank" rel="noopener">Mulebar</a> · <a href="https://raidlight.com/en/blogs/conseils-guides-plans-entrainement/nutrition-sportive-en-trail-fait-maison" target="_blank" rel="noopener">Raidlight</a> · <a href="https://reference-trail.fr/barre-energetique-maison-pour-le-trail-ma-recette-delicieuse/" target="_blank" rel="noopener">reference-trail.fr</a> · <a href="https://www2.u-trail.com/barre-energetique26/" target="_blank" rel="noopener">u-trail</a> · <a href="https://www2.u-trail.com/faire-du-trail-quand-on-est-vegetarien-nos-conseils-pratiques/" target="_blank" rel="noopener">u-trail végétarien</a> · <a href="https://menu-vegetarien.com/sport-alimentation/epreuve-endurance-repas-timing-vegetarien-vegan/" target="_blank" rel="noopener">menu-vegetarien.com</a>.</div>';
+  html += '<div class="recipe-cats">' + RECIPE_CATS.map(c =>
+    '<button class="chip' + (c.id === recipeCat ? " active" : "") + '" data-rcat="' + c.id + '">' + esc(c.label) + "</button>").join("") + "</div>";
+  const cat = RECIPE_CATS.find(c => c.id === recipeCat) || RECIPE_CATS[0];
+  html += '<div class="muted small">' + esc(cat.label + " — " + cat.when) + "</div>";
+  RECIPES.filter(r => r.cat === cat.id).forEach(r => {
+    html += '<details class="recipe-card shutter">' +
+      '<summary><b>' + esc(r.title) + "</b>" +
+      '<span><span class="badge light">' + esc(r.time) + "</span>" +
+      (r.src && r.src !== "—" ? ' <span class="badge light">Source : ' + esc(r.src) + "</span>" : "") + "</span></summary>" +
+      '<div class="muted small">' + esc(r.when) + "</div>" +
+      '<div class="recipe-cols">' +
+      '<div class="recipe-ing"><b>Ingrédients</b><ul>' + r.ing.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+      '<div class="recipe-steps"><b>Préparation</b><ol>' + r.steps.map(x => "<li>" + esc(x) + "</li>").join("") + "</ol></div>" +
+      "</div>" +
+      '<div class="tip">' + esc(r.note) + "</div>" +
+      "</details>";
+  });
+  $("#view-recipes").innerHTML = html;
+  $$("button[data-rcat]").forEach(b => b.addEventListener("click", () => { recipeCat = b.dataset.rcat; renderRecipes(); }));
 }
 
 function updateHeader() {
@@ -646,7 +800,7 @@ document.addEventListener("click", e => {
   const goto = e.target.closest("[data-goto-run]");
   if (goto) {
     const [w, d] = goto.dataset.gotoRun.split("-").map(Number);
-    showView("runs");
+    showView("new");
     setTimeout(() => prefillRunFormFromItem(w, d), 60);
     return;
   }
@@ -738,8 +892,7 @@ $("#move-close").addEventListener("click", () => { $("#move-modal").classList.ad
 
 /* rafraîchit la vue principale active (après un déplacement, une coche hors vue…) */
 function refreshMainViews() {
-  const active = document.querySelector("nav#tabs button.active");
-  renderView(active ? active.dataset.view : "today");
+  renderView(curView);
 }
 
 /* ---- modal info type de séance ---- */
@@ -783,6 +936,72 @@ function customRowHTML(x, opts) {
 }
 
 /* ================= vue : aujourd'hui ================= */
+/* ---- récupération Polar : libellés et carte (sommeil, recharge ANS/VFC, charge) ---- */
+function frNum(x, dec) {
+  return x == null ? "—" : (dec ? x.toFixed(dec) : String(Math.round(x))).replace(".", ",");
+}
+function polarRechargeLabel(st) {
+  if (st == null) return null;
+  return st >= 5 ? "bien récupéré" : st >= 4 ? "récupération correcte"
+    : st >= 3 ? "récupération moyenne" : "récupération compromise";
+}
+function polarLoadLabel(st) {
+  if (!st) return "—";
+  if (st.indexOf("STRAINED") >= 0) return "en surcharge";
+  if (st.indexOf("BALANCED") >= 0) return "équilibrée";
+  if (st.indexOf("RECOVERY") >= 0) return "en dessous de la moyenne";
+  return "—";
+}
+function polarRecoveryHTML() {
+  const nights = state.polarNights || {};
+  const dates = Object.keys(nights).sort();
+  if (!dates.length) return "";
+  const last = dates[dates.length - 1];
+  const n = nights[last];
+  const rec = n.rec, slp = n.slp;
+  const yesterday = Object.keys(nights).filter(d => d < last && nights[d].load).pop();
+  const yLoad = yesterday ? nights[yesterday].load : null;
+  let html = '<div class="day-card polar-card">' +
+    '<div class="day-head"><span>Récupération — nuit du ' + fmtDateShort(parseDate(last)) + "</span>" +
+    (state.polar.connected ? "" : ' <span class="badge light">Polar déconnectée</span>') + "</div>";
+  if (rec && rec.st != null) {
+    const good = rec.st >= 4;
+    html += '<div class="polar-charge ' + (rec.st >= 5 ? "ok" : rec.st >= 3 ? "mid" : "low") + '">' +
+      (good ? "Bien récupéré" : rec.st >= 3 ? "Récupération moyenne" : "Récupération compromise") +
+      (rec.ans != null ? " · recharge ANS " + (rec.ans >= 0 ? "+" : "") + frNum(rec.ans, 1) : "") + "</div>";
+  }
+  html += '<div class="stat-cards polar-stats">' +
+    (slp && (slp.dur || slp.score != null)
+      ? '<div class="stat"><span>' + (slp.dur ? fmtHours(slp.dur) + " h" : "—") + (slp.score ? " · " + slp.score + "/100" : "") + '</span><label>sommeil' +
+        (slp.deep != null ? " (profond " + fmtHours(slp.deep) + " h" + (slp.rem != null ? ", REM " + fmtHours(slp.rem) + " h" : "") + ")" : "") + "</label></div>"
+      : "") +
+    (rec && (rec.hrv != null || rec.br != null)
+      ? '<div class="stat"><span>' + (rec.hrv != null ? frNum(rec.hrv) + " ms" : "—") + (rec.br != null ? " · " + frNum(rec.br, 1) + "/min" : "") +
+        '</span><label>VFC RMSSD nocturne · respiration' + (rec.hr != null ? " · FC " + rec.hr + " bpm" : "") + "</label></div>"
+      : "") +
+    (yLoad
+      ? '<div class="stat"><span>' + frNum(yLoad.v) + ' · ' + polarLoadLabel(yLoad.st) + "</span><label>charge cardio du " +
+        fmtDateShort(parseDate(yesterday)) + (yLoad.str != null && yLoad.tol != null ? " (strain " + frNum(yLoad.str) + " / tolérance " + frNum(yLoad.tol) + ")" : "") + "</label></div>"
+      : "") +
+    "</div>";
+  /* mini-tendance : 7 dernières nuits (barre = recharge ANS, texte = sommeil) */
+  const last7 = dates.slice(-7);
+  if (last7.length >= 3) {
+    html += '<div class="polar-trend">';
+    last7.forEach(d => {
+      const nn = nights[d], ans = nn.rec && nn.rec.ans != null ? nn.rec.ans : null;
+      const h = ans == null ? 0 : Math.round(Math.min(100, Math.max(4, 50 + ans * 5)));
+      const cls = ans == null ? "na" : ans >= 0 ? "ok" : ans >= -3 ? "mid" : "low";
+      html += '<div class="polar-day"><div class="polar-bar ' + cls + '" style="height:' + h + '%"></div>' +
+        '<label>' + fmtDateShort(parseDate(d)).split("/")[0] + (nn.slp && nn.slp.score ? "<br>" + nn.slp.score : "") + "</label></div>";
+    });
+    html += "</div>";
+  }
+  html += '<div class="muted small">Polar : recharge ANS (vert = positive) · sous chaque barre : jour et score de sommeil. ' +
+    "Une récupération compromise deux nuits de suite = privilégier les séances faciles, un repos non prévu reste un bon choix.</div>";
+  return html + "</div>";
+}
+
 function renderToday() {
   const w = currentWeek(), idx = todayIdx(), week = effWeek(w);
   const dates = weekDates(w);
@@ -797,6 +1016,9 @@ function renderToday() {
     '<h2>Semaine ' + w + " — " + esc(blockOf(w).name) + (week.light ? ' <span class="badge light">allégée</span>' : "") + (isPrepWeek(w) ? ' <span class="badge prep">course prép.</span>' : "") + "</h2>" +
     '<div class="muted">Du ' + fmtDateShort(dates[0]) + " au " + fmtDateShort(dates[6]) + " · " + (j >= 0 ? "J−" + j + " avant la course" : "course passée") + "</div></div>" +
     '<div class="hero-weekbar">' + weekBar(w) + "</div></div>";
+
+  const recHTML = polarRecoveryHTML();
+  if (recHTML) html += recHTML;
 
   html += '<h3>Ce que le programme te propose aujourd\'hui</h3>';
   html += '<div class="day-card today-card">';
@@ -845,7 +1067,7 @@ function renderToday() {
   $("#view-today").innerHTML = html;
 
   const rec = $("#today-record");
-  if (rec) rec.addEventListener("click", () => { showView("runs"); setTimeout(startRecording, 80); });
+  if (rec) rec.addEventListener("click", () => { showView("traces"); setTimeout(startRecording, 80); });
   const sem = $("#today-semaine");
   if (sem) sem.addEventListener("click", () => showView("semaine"));
 }
@@ -906,7 +1128,7 @@ function renderProgram() {
     (wExtra ? " + " + wExtra + " min hors programme" : "") + ")</label></div>" +
     "</div>";
   html += dailyWeekHTML(cur, dates);
-  html += '<div class="week-grid big">';
+  html += '<div class="week-grid big hscroll">';
   week.days.forEach((day, d) => {
     html += '<div class="day-card"><div class="day-head"><span>' + DAY_NAMES[d] + ' <span class="muted">' + fmtDateShort(dates[d]) + "</span></span>" +
       (day.length ? '<span class="count">' + day.filter(x => itemDone(x)).length + "/" + day.length + "</span>" : "") + "</div>";
@@ -936,6 +1158,24 @@ function renderProgram() {
 }
 
 /* ================= vue : exercices ================= */
+/* zones ciblées : filtre les exercices par objectif (tendon d'Achille,
+   essuie-glace, cheville…). Le rapprochement se fait sur les muscles cités. */
+const EXO_ZONES = [
+  { id: "achille", label: "Mollets · tendon d'Achille", kw: ["mollet", "achille", "sural", "talon"] },
+  { id: "essuie", label: "Fessiers · essuie-glace (TFL)", kw: ["fessier", "essuie-glace", "tfl", "gluteus", "fess"] },
+  { id: "cheville", label: "Cheville · proprioception", kw: ["cheville", "proprio", "entorse", "stabilisateur", "appuis"] },
+  { id: "tronc", label: "Tronc · gainage", kw: ["gainage", "abdomin", "tronc", "oblique", "lombaire", "sangle", "pelvien"] },
+  { id: "jambe", label: "Jambes · chaîne postérieure", kw: ["quadriceps", "ischio", "jambe", "postérieur", "genou", "cuisse", "psoas", "hanche", "mollets"] },
+  { id: "plio", label: "Pliométrie · puissance", kw: ["pliom", "puissance", "saut", "explosiv", "détente", "réactivité"] }
+];
+let exoZone = "tout";
+function exoMatchesZone(ex, zoneId) {
+  if (zoneId === "tout") return true;
+  const z = EXO_ZONES.find(x => x.id === zoneId);
+  if (!z) return true;
+  const hay = ((ex.muscles || "") + " " + (ex.name || "")).toLowerCase();
+  return z.kw.some(k => hay.indexOf(k) >= 0);
+}
 function renderExercises() {
   const sections = [
     { r: "A", title: "RM-A — Jambes et chaîne postérieure (lundi matin, 30-35')",
@@ -945,9 +1185,18 @@ function renderExercises() {
     { r: "S", title: "Corde à sauter — pliométrie douce, cheville et coordination (10-15')",
       subtitle: "Règle ta corde : poignées à hauteur d'aisselles en marchant sur le milieu de la corde. Sur sol souple, toujours sur l'avant-pied, genoux souples." }
   ];
-  let html = "";
+  let html = "<h2>Exercices</h2>" +
+    '<div class="recipe-cats">' +
+    '<button class="chip' + (exoZone === "tout" ? " active" : "") + '" data-exozone="tout">Tous</button>' +
+    EXO_ZONES.map(z => '<button class="chip' + (exoZone === z.id ? " active" : "") + '" data-exozone="' + z.id + '">' + esc(z.label) + "</button>").join("") +
+    "</div>";
+  if (exoZone !== "tout") {
+    const n = EXERCISES.filter(e => exoMatchesZone(e, exoZone)).length;
+    html += '<div class="muted small">' + n + " exercice" + (n > 1 ? "s" : "") + " pour : " + esc((EXO_ZONES.find(z => z.id === exoZone) || {}).label || "") + ".</div>";
+  }
   sections.forEach(sec => {
-    const list = EXERCISES.filter(e => e.routine === sec.r);
+    const list = EXERCISES.filter(e => e.routine === sec.r && exoMatchesZone(e, exoZone));
+    if (!list.length) return; // section sans exercice correspondant au filtre
     html += '<h3>' + esc(sec.title) + '</h3><div class="muted sub">' + esc(sec.subtitle) + "</div>";
     html += '<div class="row-actions"><button class="btn" data-routine="' + sec.r + '">Lancer la séance guidée</button></div>';
     html += '<div class="exo-grid">';
@@ -962,15 +1211,16 @@ function renderExercises() {
     });
     html += "</div>";
   });
-  html += '<h3>RM-C — Pliométrie et gammes (S10, S14, 20\' après 10\' d\'échauffement)</h3>';
-  html += '<div class="note">' + RM_C_DRILLS.map(esc).join("<br>") + "<br>Progressif, sur herbe ou sol souple — jamais sur sol dur si vous pesez plus de 85 kg ou si la cheville parle.</div>";
-  html += '<h3>Gammes de course (1-2 fois par semaine)</h3>';
-  html += '<div class="note">Après 10\' d\'échauffement, 2 à 3 fois 20\'\' de chaque : montées de genoux, talons-fesses, foulées bondissantes, puis 3-4 lignes droites progressives. Elles économisent la cheville et le tendon.</div>';
-  html += '<h3>Nutrition de l\'effort</h3>';
-  html += '<div class="note">' + NUTRITION_TIPS.map(esc).join("<br>") + "</div>";
+  html += '<details class="shutter"><summary>RM-C — Pliométrie et gammes (S10, S14, 20\' après 10\' d\'échauffement)</summary>' +
+    '<div class="note">' + RM_C_DRILLS.map(esc).join("<br>") + "<br>Progressif, sur herbe ou sol souple — jamais sur sol dur si vous pesez plus de 85 kg ou si la cheville parle.</div></details>";
+  html += '<details class="shutter"><summary>Gammes de course (1-2 fois par semaine)</summary>' +
+    '<div class="note">Après 10\' d\'échauffement, 2 à 3 fois 20\'\' de chaque : montées de genoux, talons-fesses, foulées bondissantes, puis 3-4 lignes droites progressives. Elles économisent la cheville et le tendon.</div></details>';
+  html += '<details class="shutter"><summary>Nutrition de l\'effort</summary>' +
+    '<div class="note">' + NUTRITION_TIPS.map(esc).join("<br>") + "</div></details>";
   $("#view-exercises").innerHTML = html;
 
   $$("button[data-exo]").forEach(btn => btn.addEventListener("click", () => openExo(btn.dataset.exo)));
+  $$("button[data-exozone]").forEach(btn => btn.addEventListener("click", () => { exoZone = btn.dataset.exozone; renderExercises(); }));
 }
 
 /* ---- modal exercice : animation + minuteur ---- */
@@ -1107,7 +1357,12 @@ function paintPlayerDone() {
   const doneAlready = firstItemOfCode(r.code) == null;
   $("#player-progress").innerHTML = "";
   $("#player-body").innerHTML = '<div class="player-done"><div class="big-check">✔</div><h4>Séance ' + esc(r.name) + " terminée !</h4>" +
-    '<p class="muted">Prends 5\' pour l\'automassage (fessier, TFL, essuie-glace) et des étirements doux.</p></div>';
+    '<div class="postexo-grid">' +
+    '<div class="postexo-sec"><h4>Tout de suite</h4><ul>' + POSTEXO.now.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+    '<div class="postexo-sec"><h4>Étirements & automassage</h4><ul>' + POSTEXO.stretch.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+    '<div class="postexo-sec"><h4>Manger : quoi et quand</h4><ul>' + POSTEXO.food.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+    "</div>" +
+    '<div class="note plan-warnings">' + esc(POSTEXO.warn) + "</div></div>";
   $("#player-actions").innerHTML =
     (doneAlready ? '<button class="btn primary" id="pl-extra">Compter ce temps (' + parseDurMin(r.dur) + " min) dans le volume réalisé — hors programme</button>"
                  : '<button class="btn primary" id="pl-mark">Cocher la séance ' + esc(TYPES[r.code].label) + " comme faite</button>") +
@@ -1231,9 +1486,15 @@ function nextPhase() {
     return;
   }
   if (Timer.phase === "work") {
-    if (Timer.rep < c.reps) { Timer.rep++; startPhase("work", c.work); }
-    else if (Timer.set < c.sets) { Timer.set++; Timer.rep = 1; startPhase("rest", c.setrest || c.rest); }
-    else finishTimer();
+    /* après un effort : repos entre répétitions, puis repos entre séries, puis terminé */
+    if (Timer.rep < c.reps) {
+      Timer.rep++;
+      if (c.rest > 0) startPhase("rest", c.rest); else startPhase("work", c.work);
+    } else if (Timer.set < c.sets) {
+      Timer.set++; Timer.rep = 1;
+      const sr = c.setrest || c.rest;
+      if (sr > 0) startPhase("rest", sr); else startPhase("work", c.work);
+    } else finishTimer();
   } else if (Timer.phase === "rest") {
     startPhase("work", c.work);
   } else if (Timer.phase === "prep") {
@@ -1253,7 +1514,29 @@ function finishTimer() {
       toast(min + " min comptés dans le volume réalisé (hors programme).");
     }
   }
+  showPostExoTips(Timer.label);
 }
+/* ---- popup conseils post-exercice : récupération, étirements, alimentation ---- */
+const POSTEXO_MUTE_KEY = "trainingtrail_postexo_mute";
+function showPostExoTips(label) {
+  if (localStorage.getItem(POSTEXO_MUTE_KEY) === "1") return;
+  $("#postexo-title").textContent = (label ? label + " — terminé !" : "Exercice terminé — bien joué !");
+  $("#postexo-body").innerHTML =
+    '<div class="postexo-grid">' +
+    '<div class="postexo-sec"><h4>Tout de suite</h4><ul>' + POSTEXO.now.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+    '<div class="postexo-sec"><h4>Étirements & automassage</h4><ul>' + POSTEXO.stretch.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+    '<div class="postexo-sec"><h4>Manger : quoi et quand</h4><ul>' + POSTEXO.food.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></div>" +
+    "</div>" +
+    '<div class="note plan-warnings">' + esc(POSTEXO.warn) + "</div>";
+  $("#postexo-mute").checked = false;
+  $("#postexo-modal").classList.remove("hidden");
+}
+function closePostExo() {
+  if ($("#postexo-mute").checked) localStorage.setItem(POSTEXO_MUTE_KEY, "1");
+  $("#postexo-modal").classList.add("hidden");
+}
+$("#postexo-close").addEventListener("click", closePostExo);
+$("#postexo-ok").addEventListener("click", closePostExo);
 function paintTimer(phase, remain, round) {
   if (phase) $("#timer-phase").textContent = phase;
   if (round) $("#timer-round").textContent = round;
@@ -1261,7 +1544,8 @@ function paintTimer(phase, remain, round) {
   $("#timer-clock").className = "timer-clock " + (Timer.phase === "work" ? "t-work" : Timer.phase === "rest" ? "t-rest" : "");
 }
 function paintTimerPhase() {
-  const names = { work: "Effort", rest: "Récupération", prep: "Préparation", idle: "Prêt", chrono: "Série en cours — chrono", ready: "Série suivante : ▶ pour la démarrer, ou « Série faite »", over: "Terminé" };
+  const names = { work: "Effort", prep: "Préparation", idle: "Prêt", chrono: "Série en cours — chrono", ready: "Série suivante : ▶ pour la démarrer, ou « Série faite »", over: "Terminé" };
+  names.rest = Timer.mode === "interval" && Timer.rep > 1 ? "Récupération (entre répétitions)" : "Récupération (entre séries)";
   let round = "Série " + Timer.set + "/" + Timer.cfg.sets;
   if (Timer.mode === "interval") round += " — répétition " + Timer.rep + "/" + Timer.cfg.reps;
   else if (Timer.mode === "reps") round = "Série " + Timer.repsModeSet + "/" + Timer.cfg.sets;
@@ -1377,12 +1661,33 @@ setInterval(() => {
   if (Timer.run && Timer.remain > 0 && Timer.remain <= 3 && (Timer.phase === "work" || Timer.phase === "rest")) beep(600, 0.08);
 }, 1000);
 
-/* ================= vue : sorties ================= */
-function renderRuns() {
+/* ================= vue : sessions (onglet Sessions) =================
+   Quatre sous-onglets : Nouveau (créer une séance), Séances (l'historique,
+   filtrable par type), Traces (enregistrement GPS en direct), Résumé (FC,
+   km, VO2max). */
+let stoppedTrace = null;     // trace arrêtée en attente (après « Stop »)
+let sessionFilter = "tout";  // filtre par type de la liste des séances
+
+/* codes de séance créables à la main : course + renforcement + autres */
+const SESSION_CODES = RUN_CODES.concat(["RMA", "RMB", "RMC", "GAING", "CORDE", "PROP", "MAS", "NAT", "YOGA", "V"]);
+
+/* ---- Nouveau : créer une séance (course, renforcement, vélo…) ---- */
+function renderNew() {
   const w = currentWeek(), idx = todayIdx(), week = effWeek(w);
   const runsToday = week.days[idx].filter(x => RUN_CODES.includes(x.it.c)).map(x => x.it);
-  let html = "<h2>Sorties & GPS</h2>";
+  let html = "<h2>Nouvelle séance</h2>";
 
+  /* partir direct : enregistrer une trace GPS en direct, ou noter à la main */
+  html += '<div class="rec-launch"><div class="row-actions">';
+  if (Recorder.active || stoppedTrace)
+    html += '<button class="btn" id="new-rec-view">' + (Recorder.active ? "Enregistrement GPS en cours — voir" : "Trace GPS prête — la noter") + "</button>";
+  else {
+    html += '<button class="btn primary" id="new-rec-start">Démarrer l\'enregistrement GPS</button>';
+  }
+  html += "</div>" +
+    '<div class="muted small">L\'enregistrement GPS trace la sortie en direct (carte, allure, D+), continue si tu changes d\'onglet, puis pré-remplit le formulaire ci-dessous. Sans GPS : note la séance à la main ou importe un fichier GPX.</div></div>';
+
+  /* séance proposée aujourd'hui (rappel du programme) */
   html += '<div class="run-suggest"><h3>La séance proposée aujourd\'hui</h3>';
   if (runsToday.length) {
     runsToday.forEach(it => {
@@ -1394,36 +1699,29 @@ function renderRuns() {
       html += "</div>";
     });
   } else {
-    html += '<div class="muted">Pas de séance de course programmée aujourd\'hui (récupération, vélo ou renforcement). Tu peux quand même enregistrer une sortie si tu sors.</div>';
+    html += '<div class="muted">Pas de course programmée aujourd\'hui (récupération, vélo ou renforcement).</div>';
   }
   html += "</div>";
 
-  /* enregistreur GPS */
-  html += '<div class="recorder" id="recorder">' +
-    '<h3>Enregistrement GPS en direct</h3>' +
-    '<div class="rec-stats">' +
-    '<div class="rec-stat"><span id="rec-time">00:00:00</span><label>Durée</label></div>' +
-    '<div class="rec-stat"><span id="rec-dist">0,00 km</span><label>Distance</label></div>' +
-    '<div class="rec-stat"><span id="rec-speed">0,0 km/h</span><label>Vitesse</label></div>' +
-    '<div class="rec-stat"><span id="rec-avg">0,0 km/h</span><label>Moy. globale</label></div>' +
-    '<div class="rec-stat"><span id="rec-avgm">0,0 km/h</span><label>Moy. en mouvement</label></div>' +
-    '<div class="rec-stat"><span id="rec-dplus">0 m</span><label>D+ cumulé</label></div>' +
-    '<div class="rec-stat"><span id="rec-ele">—</span><label>Altitude</label></div>' +
-    '<div class="rec-stat"><span id="rec-acc">—</span><label>Précision GPS</label></div>' +
-    "</div>" +
-    '<div class="row-actions"><button class="btn primary" id="rec-start">Démarrer l\'enregistrement</button>' +
-    '<button class="btn" id="rec-pause" disabled>Pause</button>' +
-    '<button class="btn danger" id="rec-stop" disabled>Terminer et noter la sortie</button>' +
-    '<button class="btn" id="rec-cancel" disabled>Annuler</button></div>' +
-    '<div class="muted small" id="rec-note">Nécessite l\'autorisation de géolocalisation. La trace est filtrée (anti-dérive, anti-sauts) et l\'enregistrement continue si tu changes d\'onglet ou de page ; en cas de fermeture, il est proposé de le reprendre au retour.</div>' +
-    "</div>";
+  /* séances guidées de renforcement : créent et cochent la séance */
+  html += '<h3>Séance guidée de renforcement</h3>' +
+    '<div class="row-actions strength-launch">' +
+    '<button class="btn" data-routine="A">RM-A · Jambes & chaîne post. (30-35\')</button>' +
+    '<button class="btn" data-routine="B">RM-B · Tronc, fessiers & cheville (25-30\')</button>' +
+    '<button class="btn" data-routine="C">RM-C · Pliométrie (20\')</button>' +
+    '<button class="btn" data-routine="S">Corde à sauter (10-15\')</button>' +
+    '<button class="btn" data-routine="G">Gainage léger</button></div>' +
+    '<div class="muted small" style="margin-top:-6px">La séance se déroule exercice par exercice, puis est cochée dans le programme (premier créneau libre de la semaine).</div>';
 
-  /* formulaire feedback */
-  html += '<div class="run-form"><h3>Ma sortie réelle — feedback</h3>' +
+  /* formulaire manuel : tout type de séance */
+  html += '<div class="row-actions">' +
+    '<label class="btn file-btn">Importer un GPX <input type="file" id="rf-gpx" accept=".gpx" multiple></label></div>';
+  html += '<div class="run-form" id="rf-box">' +
+    '<h3>Séance manuelle</h3>' +
     '<div class="form-grid">' +
     '<label>Date <input type="date" id="rf-date" value="' + isoDate(new Date()) + '"></label>' +
     '<label>Type de séance <select id="rf-code">' +
-      RUN_CODES.map(c => '<option value="' + c + '">' + esc(TYPES[c].label) + "</option>").join("") +
+      SESSION_CODES.map(c => '<option value="' + c + '">' + esc(TYPES[c].label) + "</option>").join("") +
       '<option value="AUTRE">Autre</option></select></label>' +
     '<div class="full muted small" id="rf-slcheck" style="display:none"></div>' +
     '<label>Distance (km) <input type="number" id="rf-dist" step="0.01" min="0"></label>' +
@@ -1439,29 +1737,509 @@ function renderRuns() {
     '<label>Douleur cheville (/10) <input type="number" id="rf-ankle" min="0" max="10" placeholder="0-10"></label>' +
     "</div>" +
     '<label class="full">Notes (matériel, ravitaillement, météo…) <textarea id="rf-notes" rows="2"></textarea></label>' +
-    '<div class="row-actions"><button class="btn primary" id="rf-save">Enregistrer la sortie</button>' +
-    '<label class="btn file-btn">Importer un GPX <input type="file" id="rf-gpx" accept=".gpx" multiple></label>' +
+    '<div class="row-actions"><button class="btn primary" id="rf-save">Enregistrer la séance</button>' +
     '<input type="hidden" id="rf-points"></div>' +
-    '<div class="muted small">Priorité si la semaine est impossible : 1) sortie longue, 2) séance qualité du mercredi, 3) RM-B, 4) le reste. On ne rattrape jamais une séance manquée.</div>' +
+    '<div class="muted small">Rappel : on ne rattrape jamais une séance manquée. Priorité si la semaine est impossible : 1) sortie longue, 2) qualité du mercredi, 3) RM-B, 4) le reste.</div>' +
     "</div>";
 
-  /* historique */
-  html += "<h3>Historique des sorties</h3>";
-  const sorted = state.runs.slice().sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
-  if (!sorted.length) html += '<div class="muted">Aucune sortie enregistrée pour l\'instant.</div>';
-  sorted.forEach(r => { html += runCardHTML(r); });
+  $("#view-new").innerHTML = html;
+  bindNewEvents();
+}
 
-  $("#view-runs").innerHTML = html;
-  bindRunsEvents(sorted);
+/* ---- Séances : l'historique complet, filtrable par type ---- */
+function sessionTypes() {
+  const codes = {};
+  state.runs.forEach(r => { codes[r.code] = (codes[r.code] || 0) + 1; });
+  return Object.keys(codes).sort((a, b) => codes[b] - codes[a]);
+}
+function renderSessions() {
+  let html = "<h2>Mes séances</h2>";
+  const types = sessionTypes();
+  const all = state.runs.slice().sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+  /* filtre par type de séance (course, renforcement, corde, vélo…) */
+  html += '<div class="recipe-cats">' +
+    '<button class="chip' + (sessionFilter === "tout" ? " active" : "") + '" data-sfilter="tout">Tous (' + all.length + ")</button>" +
+    types.map(c => '<button class="chip' + (sessionFilter === c ? " active" : "") + '" data-sfilter="' + c + '">' +
+      esc((TYPES[c] || { label: c }).label) + " (" + state.runs.filter(r => r.code === c).length + ")</button>").join("") +
+    "</div>";
+  const sorted = sessionFilter === "tout" ? all : all.filter(r => r.code === sessionFilter);
+  if (!sorted.length) {
+    html += '<div class="muted">Aucune séance enregistrée pour l\'instant. Crée-la dans « Nouveau », ou laisse la montre Polar la synchroniser (elle apparaît alors ici automatiquement).</div>';
+  } else {
+    const km = sorted.reduce((s, r) => s + (r.dist || 0), 0);
+    const dur = sorted.reduce((s, r) => s + (r.dur || 0), 0);
+    const dp = sorted.reduce((s, r) => s + (r.dplus || 0), 0);
+    html += '<div class="run-sheet-total muted small">' + sorted.length + " séance" + (sorted.length > 1 ? "s" : "") + " · " +
+      km.toFixed(1).replace(".", ",") + " km · " + fmtHours(dur) + " h · " + dp + " m D+</div>";
+    html += '<div class="table-wrap"><table class="run-sheet"><thead><tr>' +
+      "<th>Date</th><th>Type</th><th>km</th><th>Durée</th><th>D+</th><th>Allure</th><th>Sensations</th><th></th>" +
+      "</tr></thead><tbody>";
+    sorted.forEach(r => {
+      const pace = r.dist > 0 && r.dur > 0 ? Math.floor(r.dur / r.dist) + "'" + String(Math.round((r.dur / r.dist % 1) * 60)).padStart(2, "0") + '"' : "—";
+      html += '<tr class="run-row" data-focus-run="' + r.id + '" title="Ouvrir la fiche de la séance">' +
+        "<td>" + esc(fmtDateShort(parseDate(r.date))) + "</td>" +
+        "<td>" + typeChip(r.code) + "</td>" +
+        "<td>" + (r.dist ? r.dist.toFixed(1).replace(".", ",") : "—") + "</td>" +
+        "<td>" + (r.dur ? fmtDur(r.dur * 60) : "—") + "</td>" +
+        "<td>" + (r.dplus || 0) + "</td>" +
+        "<td>" + pace + "</td>" +
+        "<td>" + (r.feel ? r.feel + "/10" : "—") + "</td>" +
+        '<td><button class="mini-btn" data-edit="' + r.id + '">Modifier</button></td>' +
+        "</tr>";
+    });
+    html += "</tbody></table></div>";
+  }
+  html += "<h3>Détail</h3>";
+  /* une fiche illisible ne doit jamais vider tout l'onglet Séances :
+     chaque carte est rendue indépendamment, en repli minimal si erreur */
+  sorted.forEach(r => {
+    try { html += runCardHTML(r); }
+    catch (e) {
+      console.warn("Fiche séance " + r.id + " non affichée :", e);
+      html += '<div class="run-card"><div class="run-head"><b>' + esc(fmtDateShort(parseDate(r.date))) +
+        "</b> " + typeChip(r.code) + '<span class="muted small">Fiche partielle (donnée inattendue).</span></div></div>';
+    }
+  });
+  $("#view-sessions").innerHTML = html;
+  bindSessionsEvents(sorted);
+}
+
+/* ---- Traces : enregistrement GPS en direct + visionneuse (carte + courbes) ---- */
+function renderTraces() {
+  /* une trace est ouverte : la visionneuse remplace la liste (et l'enregistreur,
+     dont la bannière flottante reste disponible sur toutes les vues) */
+  if (openTraceId) { renderTraceViewer(openTraceId); return; }
+  let html = "<h2>Traces GPS</h2>";
+  html += '<div class="recorder" id="recorder">';
+  if (Recorder.active) {
+    html += '<h3 id="rec-state">Enregistrement GPS en cours</h3>' +
+      '<div class="rec-stats">' +
+      '<div class="rec-stat"><span id="rec-time">00:00:00</span><label>Durée</label></div>' +
+      '<div class="rec-stat"><span id="rec-dist">0,00 km</span><label>Distance</label></div>' +
+      '<div class="rec-stat"><span id="rec-speed">0,0 km/h</span><label>Vitesse</label></div>' +
+      '<div class="rec-stat"><span id="rec-avgm">0,0 km/h</span><label>Moy. en mouvement</label></div>' +
+      '<div class="rec-stat"><span id="rec-dplus">0 m</span><label>D+ cumulé</label></div>' +
+      '<div class="rec-stat"><span id="rec-ele">—</span><label>Altitude</label></div>' +
+      '<div class="rec-stat"><span id="rec-acc">—</span><label>Précision GPS</label></div>' +
+      "</div>" +
+      '<div class="row-actions"><button class="btn" id="rec-cancel">Annuler</button>' +
+      '<button class="btn" id="rec-pause">' + (Recorder.paused ? "Reprendre" : "Pause") + '</button>' +
+      '<button class="btn danger" id="rec-stop">Stop</button></div>' +
+      '<div class="muted small" id="rec-note">Enregistrement en cours… Tu peux changer d\'onglet ou de page : la trace continue et est sauvegardée.</div>';
+  } else if (stoppedTrace) {
+    const stp = stoppedTrace, sstats = Geo.stats(stp.pts), el = Geo.elevation(stp.pts);
+    html += '<h3 id="rec-state">Trace enregistrée — à noter ou supprimer</h3>' +
+      '<div class="rec-stats">' +
+      stat(sstats.dist.toFixed(2).replace(".", ",") + " km", "distance") +
+      stat(fmtDur(sstats.dur), "durée") +
+      stat(Math.round(el.up) + " m", "D+") +
+      stat(String(stp.pts.length), "points GPS") +
+      "</div>" +
+      '<div class="row-actions"><button class="btn primary" id="rec-finish">Terminer et noter la séance</button>' +
+      '<button class="btn danger" id="rec-discard">Supprimer la séance</button></div>' +
+      '<div class="muted small" id="rec-note">La trace est prête : « Terminer et noter la séance » pré-remplit le formulaire de l\'onglet Nouveau (chaussures, douleurs, sensations) ; « Supprimer » jette la trace.</div>';
+  } else {
+    html += '<div class="row-actions"><button class="btn primary" id="rec-start">Démarrer l\'enregistrement</button></div>' +
+      '<div class="muted small" id="rec-note">Nécessite l\'autorisation de géolocalisation. La trace est filtrée (anti-dérive, anti-sauts) et l\'enregistrement continue si tu changes d\'onglet ou de page ; en cas de fermeture, il est proposé de le reprendre au retour.</div>';
+  }
+  html += "</div>";
+  html += tracesListHTML();
+  $("#view-traces").innerHTML = html;
+  bindTracesEvents();
+}
+
+/* liste des traces enregistrées (points dans l'état ou rangés dans R2) */
+function tracesListHTML() {
+  const traces = state.runs
+    .filter(r => (r.points && r.points.length > 1) || r.trackRef)
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id);
+  let html = '<h3 id="traces-list-title">Mes traces</h3>';
+  if (!traces.length) {
+    html += '<div class="muted">Aucune trace pour l\'instant. Démarre l\'enregistrement ci-dessus ou enregistre une séance avec la montre Polar : la trace apparaîtra ici, visualisable sur carte et en courbes.</div>';
+    return html;
+  }
+  html += '<div class="trace-list">';
+  traces.forEach(r => {
+    const s = r.points && r.points.length > 1 ? Geo.stats(r.points) : null;
+    const dist = r.dist != null ? r.dist : (s ? s.dist : null);
+    const dur = r.dur != null ? r.dur : (s ? s.dur / 60 : null);
+    const dplus = r.dplus != null ? r.dplus : (s ? s.dplus : null);
+    html += '<button class="trace-item" data-trace="' + r.id + '">' +
+      '<span class="trace-date">' + esc(fmtDateShort(parseDate(r.date))) + "</span>" +
+      typeChip(r.code) +
+      '<span class="trace-meta">' +
+      (dist != null ? dist.toFixed(1).replace(".", ",") + " km" : "—") + " · " +
+      (dur != null ? fmtDur(dur * 60) : "—") +
+      (dplus ? " · " + dplus + " m D+" : "") +
+      " · " + (r.points ? r.points.length + " pts" : "R2") +
+      "</span>" +
+      '<span class="trace-open">Voir la trace</span></button>';
+  });
+  html += "</div>";
+  return html;
+}
+
+/* ================= visionneuse de trace =================
+   Carte (fond IGN, sinon OpenStreetMap ou satellite) + courbes altitude /
+   distance / vitesse, reliées par un réticule : toucher une courbe plante
+   une ligne verticale et montre le point correspondant sur la carte. */
+let openTraceId = null;     // id de la séance affichée dans la visionneuse
+let traceMap = null;        // carte Leaflet active
+let traceBase = null;       // couche de fond courante
+let traceMarker = null;     // réticule sur la carte
+let tracePlots = [];        // courbes [{ setIndex, clear }]
+let leafletPromise = null;
+const IGN_TILES = "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0" +
+  "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}" +
+  "&STYLE=normal&FORMAT=image/png";
+
+function loadLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (leafletPromise) return leafletPromise;
+  leafletPromise = new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    document.head.appendChild(css);
+    const s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.onload = () => resolve();
+    s.onerror = () => { leafletPromise = null; reject(new Error("carte Leaflet non chargée (hors ligne ?)")); };
+    document.head.appendChild(s);
+  });
+  return leafletPromise;
+}
+function destroyTraceMap() {
+  if (traceMap) { try { traceMap.remove(); } catch (e) { } traceMap = null; }
+  traceBase = null; traceMarker = null;
+}
+
+async function renderTraceViewer(id) {
+  const run = state.runs.find(r => r.id === id);
+  if (!run) { openTraceId = null; renderTraces(); return; }
+  /* déjà affichée (resynchronisation, changement d'onglet) : ne pas reconstruire la carte */
+  if ($("#trace-viewer") && $("#trace-map") && traceMap) return;
+
+  let pts = run.points && run.points.length > 1 ? run.points : null;
+  let loadingR2 = false;
+  if (!pts && run.trackRef && ServerSync.on) {
+    loadingR2 = true;
+    $("#view-traces").innerHTML = '<h2>Traces GPS</h2><div class="muted">Chargement de la trace du ' +
+      esc(fmtDateShort(parseDate(run.date))) + "…</div>";
+    try {
+      const res = await fetch("api/track?id=" + run.trackRef, { cache: "no-store" });
+      if (res.ok) { run.points = JSON.parse(await res.text()); pts = run.points; }
+    } catch (e) { /* reste en mode dégradé : courbes seules */ }
+  }
+  if (!pts) {
+    $("#view-traces").innerHTML = "<h2>Traces GPS</h2>" +
+      '<div class="muted">Trace indisponible (hors ligne ou supprimée du serveur).</div>' +
+      '<div class="row-actions"><button class="btn" id="trace-back">← Retour aux traces</button></div>';
+    bindTraceViewerEvents(run, null);
+    return;
+  }
+
+  const s = Geo.stats(pts);
+  let html = '<div id="trace-viewer">' +
+    '<div class="row-actions trace-head"><button class="btn" id="trace-back">← Retour aux traces</button>' +
+    '<b>' + esc(fmtDateShort(parseDate(run.date))) + "</b> " + typeChip(run.code) +
+    (run.planned ? '<span class="muted small">' + esc(run.planned) + "</span>" : "") + "</div>" +
+    '<div class="rec-stats">' +
+    stat(s.dist.toFixed(2).replace(".", ","), "distance (km)") +
+    stat(fmtDur(s.dur), "durée") +
+    stat(Math.round(s.dplus) + " m", "D+") +
+    stat(s.minEle !== Infinity && s.minEle != null ? Math.round(s.minEle) + " / " + Math.round(s.maxEle) + " m" : "—", "altitudes min / max") +
+    stat(String(pts.length), "points GPS") +
+    "</div>" +
+    '<div class="layer-switch" id="trace-layers">' +
+    '<button class="chip active" data-baselayer="ign">Carte IGN</button>' +
+    '<button class="chip" data-baselayer="osm">OpenStreetMap</button>' +
+    '<button class="chip" data-baselayer="sat">Satellite</button>' +
+    "</div>" +
+    '<div id="trace-map"><div class="muted small">Chargement de la carte…</div></div>' +
+    '<div id="trace-readout" class="trace-readout muted">Touche une courbe : une ligne apparaît et le point correspondant s\'affiche sur la carte.</div>' +
+    '<div id="trace-plots"></div>' +
+    '<div class="row-actions"><button class="btn" id="trace-export">Exporter le GPX</button></div>' +
+    "</div>";
+  $("#view-traces").innerHTML = html;
+
+  /* carte : fond IGN par défaut, repli OpenStreetMap si les tuiles ne répondent pas */
+  loadLeaflet().then(() => {
+    if (!$("#trace-map") || openTraceId !== run.id) return; // l'utilisateur est reparti entre-temps
+    destroyTraceMap();
+    const L = window.L;
+    const map = L.map("trace-map", { zoomControl: true, scrollWheelZoom: false });
+    const layers = {
+      ign: L.tileLayer(IGN_TILES, { maxZoom: 19, attribution: "IGN · Géoplateforme" }),
+      osm: L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap contributeurs" }),
+      sat: L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        { maxZoom: 19, attribution: "Esri · World Imagery" })
+    };
+    let ignErrors = 0;
+    layers.ign.on("tileerror", () => {
+      if (openTraceId !== run.id || ++ignErrors < 3) return;
+      toast("Tuiles IGN indisponibles — fond OpenStreetMap utilisé.");
+      switchBase("osm");
+    });
+    traceMap = map;
+    function switchBase(name) {
+      if (!traceMap) return;
+      Object.entries(layers).forEach(([k, ly]) => { if (k === name) { if (traceBase !== ly) ly.addTo(map); } else map.removeLayer(ly); });
+      traceBase = layers[name];
+      $$("#trace-layers .chip").forEach(b => b.classList.toggle("active", b.dataset.baselayer === name));
+    }
+    traceMap.switchBase = switchBase;
+    traceMap.layers = layers;
+    switchBase("ign");
+    const line = L.polyline(pts.map(p => [p.lat, p.lon]), { color: "#ff6b57", weight: 3, opacity: 0.9 }).addTo(map);
+    L.circleMarker([pts[0].lat, pts[0].lon], { radius: 6, color: "#fff", weight: 2, fillColor: "#3fbf7f", fillOpacity: 1 })
+      .addTo(map).bindTooltip("Départ");
+    const last = pts[pts.length - 1];
+    L.circleMarker([last.lat, last.lon], { radius: 6, color: "#fff", weight: 2, fillColor: "#e05252", fillOpacity: 1 })
+      .addTo(map).bindTooltip("Arrivée");
+    traceMarker = L.circleMarker([pts[0].lat, pts[0].lon],
+      { radius: 8, color: "#fff", weight: 2, fillColor: "#ffd166", fillOpacity: 1, interactive: false }).addTo(map);
+    map.fitBounds(line.getBounds().pad(0.15));
+  }).catch(() => {
+    const el = $("#trace-map");
+    if (el) el.innerHTML = '<div class="muted small">Carte indisponible (Leaflet non chargé — connexion ?). Les courbes restent utilisables.</div>';
+  });
+
+  /* courbes avec réticule */
+  buildTracePlots(pts, run);
+  bindTraceViewerEvents(run, pts);
+}
+
+/* construit les échantillons des courbes : distance cumulée, altitude, vitesse */
+function traceSamples(pts) {
+  let d = 0;
+  const dist = [0];
+  for (let i = 1; i < pts.length; i++) {
+    d += Geo.haversine(pts[i - 1], pts[i]);
+    dist.push(d);
+  }
+  const t0 = pts[0].t != null ? pts[0].t : null;
+  const timedIdx = [];
+  pts.forEach((p, i) => { if (p.t != null && t0 != null) timedIdx.push(i); });
+  const alt = [], kmTime = [], speed = [];
+  pts.forEach((p, i) => {
+    if (p.ele != null) alt.push({ x: dist[i] / 1000, y: p.ele, i });
+  });
+  if (t0 != null) {
+    timedIdx.forEach(i => {
+      kmTime.push({ x: (pts[i].t - t0) / 1000, y: dist[i] / 1000, i });
+    });
+    const spd = Geo.speedSeries(timedIdx.map(i => pts[i]));
+    spd.forEach((s, j) => { speed.push({ x: (s.t - t0) / 1000, y: s.v, i: timedIdx[j] }); });
+  }
+  return { alt, kmTime, speed, dist };
+}
+
+/* une courbe interactives : aire + ligne + réticule, x horizontal en unité quelconque */
+function xPlot(title, samples, opts) {
+  const W = 560, H = 130, L0 = 46, R0 = 10, T0 = 16, B0 = 22;
+  const div = document.createElement("div");
+  div.className = "plot-block";
+  if (!samples || samples.length < 2) {
+    div.innerHTML = '<div class="plot-title">' + esc(title) + '</div><div class="muted small">' +
+      esc(opts.empty || "Pas assez de points.") + "</div>";
+    return { el: div, setIndex() { }, clear() { } };
+  }
+  const x0 = samples[0].x, x1 = Math.max(samples[samples.length - 1].x, x0 + 1e-6);
+  let y0 = Infinity, y1 = -Infinity;
+  samples.forEach(s => { y0 = Math.min(y0, s.y); y1 = Math.max(y1, s.y); });
+  if (y1 - y0 < 1e-6) { y1 += 1; y0 -= 1; }
+  const pad = (y1 - y0) * 0.08;
+  y0 -= pad; y1 += pad;
+  const X = v => L0 + (v - x0) / (x1 - x0) * (W - L0 - R0);
+  const Y = v => H - B0 - (v - y0) / (y1 - y0) * (H - T0 - B0);
+  const color = opts.color || "#4a90d9";
+  let path = "M" + X(samples[0].x).toFixed(1) + "," + Y(samples[0].y).toFixed(1);
+  for (let i = 1; i < samples.length; i++) path += " L" + X(samples[i].x).toFixed(1) + "," + Y(samples[i].y).toFixed(1);
+  const area = path + " L" + X(x1).toFixed(1) + "," + (H - B0) + " L" + X(x0).toFixed(1) + "," + (H - B0) + " Z";
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("class", "xplot");
+  svg.innerHTML =
+    '<path d="' + area + '" fill="' + color + '" opacity="0.13"/>' +
+    '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="1.6"/>' +
+    '<text x="' + L0 + '" y="11" class="prof-label">' + esc(opts.yFmt(y1)) + "</text>" +
+    '<text x="' + L0 + '" y="' + (H - 7) + '" class="prof-label">' + esc(opts.yFmt(y0)) + "</text>" +
+    '<text x="' + (W - R0) + '" y="' + (H - 7) + '" class="prof-label" text-anchor="end">' + esc(opts.xFmt(x1)) + "</text>" +
+    '<line class="xhair-line" x1="0" x2="0" y1="' + T0 + '" y2="' + (H - B0) + '" style="display:none"/>' +
+    '<circle class="xhair-dot" r="4.5" cx="0" cy="0" style="display:none"/>';
+  div.innerHTML = '<div class="plot-title">' + esc(title) + "</div>";
+  div.appendChild(svg);
+  const line = svg.querySelector(".xhair-line"), dot = svg.querySelector(".xhair-dot");
+  /* réticule : la ligne se cale sur l'échantillon le plus proche du doigt/curseur */
+  const setIndex = idx => {
+    const s = samples[idx];
+    if (!s) return;
+    const px = X(s.x);
+    line.setAttribute("x1", px); line.setAttribute("x2", px); line.style.display = "";
+    dot.setAttribute("cx", px); dot.setAttribute("cy", Y(s.y)); dot.style.display = "";
+  };
+  const clear = () => { line.style.display = "none"; dot.style.display = "none"; };
+  const pick = ev => {
+    ev.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const px = ((ev.clientX - rect.left) / rect.width) * W;
+    if (px < L0 - 4 || px > W - R0 + 4) return;
+    /* recherche du plus proche : les x sont croissants (temps ou distance) */
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < samples.length; i++) {
+      const dd = Math.abs(X(samples[i].x) - px);
+      if (dd < bestD) { bestD = dd; best = i; }
+    }
+    opts.onPick(best, samples[best]);
+  };
+  svg.addEventListener("pointermove", pick);
+  svg.addEventListener("pointerdown", pick);
+  svg.addEventListener("pointerleave", () => opts.onPick(null, null));
+  return { el: div, setIndex, clear };
+}
+
+function buildTracePlots(pts, run) {
+  const box = $("#trace-plots");
+  if (!box) return;
+  box.innerHTML = "";
+  tracePlots = [];
+  const S = traceSamples(pts);
+  const t0 = pts[0].t;
+  const timeFmt = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60; return h ? h + "h" + String(m).padStart(2, "0") : m + "'" + String(ss).padStart(2, "0") + '"'; };
+  const onPick = (idxInPlot, sample, allPlots) => {
+    /* synchronise toutes les courbes + la carte sur le point choisi */
+    const ptIndex = sample ? sample.i : null;
+    tracePlots.forEach(p => { if (sample) p.setByPt(ptIndex); else p.clear(); });
+    const ro = $("#trace-readout");
+    if (sample && ro) {
+      const p = pts[ptIndex];
+      let txt = S.dist[ptIndex] != null ? (S.dist[ptIndex] / 1000).toFixed(2).replace(".", ",") + " km" : "";
+      if (p.ele != null) txt += " · " + Math.round(p.ele) + " m";
+      if (p.t != null && t0 != null) txt += " · " + timeFmt((p.t - t0) / 1000);
+      const near = S.speedByPt[ptIndex];
+      if (near != null) txt += " · " + near.toFixed(1).replace(".", ",") + " km/h";
+      if (p.hr != null) txt += " · " + Math.round(p.hr) + " bpm";
+      ro.textContent = txt;
+    }
+    if (sample && traceMarker && traceMap && pts[ptIndex]) {
+      traceMarker.setLatLng([pts[ptIndex].lat, pts[ptIndex].lon]);
+    }
+  };
+  /* index de vitesse par point : fenêtre 30 s autour du point */
+  S.speedByPt = [];
+  if (S.speed.length) {
+    S.speed.forEach(s => { S.speedByPt[s.i] = s.y; });
+  }
+  const mk = (title, samples, opts) => {
+    const plot = xPlot(title, samples, Object.assign({ onPick: (idx, s) => onPick(idx, s) }, opts));
+    /* index par numéro de point (les échantillons n'ont pas tous les points) */
+    const byPt = {};
+    samples.forEach((s, i) => { if (!(s.i in byPt)) byPt[s.i] = i; });
+    plot.setByPt = ptIdx => { if (ptIdx in byPt) plot.setIndex(byPt[ptIdx]); else plot.clear(); };
+    box.appendChild(plot.el);
+    tracePlots.push(plot);
+  };
+  mk("Altitude (m) — en fonction de la distance", S.alt,
+    { yFmt: v => Math.round(v) + " m", xFmt: v => v.toFixed(1).replace(".", ",") + " km", color: "#2fa860", empty: "Pas de données d'altitude dans cette trace." });
+  mk("Distance (km) — en fonction du temps", S.kmTime,
+    { yFmt: v => v.toFixed(1).replace(".", ",") + " km", xFmt: timeFmt, color: "#4a90d9", empty: "Pas d'horodatage dans cette trace." });
+  mk("Vitesse lissée (km/h) — en fonction du temps", S.speed,
+    { yFmt: v => v.toFixed(1).replace(".", ",") + " km/h", xFmt: timeFmt, color: "#c78a1d", empty: "Pas d'horodatage dans cette trace." });
+}
+
+function bindTraceViewerEvents(run, pts) {
+  const back = $("#trace-back");
+  if (back) back.addEventListener("click", () => {
+    openTraceId = null;
+    destroyTraceMap();
+    tracePlots = [];
+    renderTraces();
+  });
+  $$("#trace-layers .chip").forEach(b => b.addEventListener("click", () => {
+    if (traceMap && traceMap.switchBase) traceMap.switchBase(b.dataset.baselayer);
+    else toast("Carte pas encore chargée.");
+  }));
+  const exp = $("#trace-export");
+  if (exp && pts) exp.addEventListener("click", () => {
+    Geo.download("sortie-" + run.date + ".gpx", Geo.toGpx("Sortie " + run.date, pts));
+  });
+}
+
+/* ---- Résumé : FC, km, VO2max ---- */
+function renderStats() {
+  const runs = state.runs;
+  const km = runs.reduce((s, r) => s + (r.dist || 0), 0);
+  const dur = runs.reduce((s, r) => s + (r.dur || 0), 0);
+  const dp = runs.reduce((s, r) => s + (r.dplus || 0), 0);
+  /* FC : profil + moyennes/maxima des séances Polar */
+  const withHr = runs.filter(r => r.polar && r.polar.hr && r.polar.hr.average);
+  const hrAvg = withHr.length ? Math.round(withHr.reduce((s, r) => s + r.polar.hr.average, 0) / withHr.length) : null;
+  const hrMax = withHr.length ? Math.max(...withHr.map(r => r.polar.hr.maximum || 0)) : null;
+  const p = state.profile || {};
+  let html = "<h2>Résumé</h2>" +
+    '<div class="stat-cards">' +
+    '<div class="stat"><span>' + km.toFixed(1).replace(".", ",") + '</span><label>km au total</label></div>' +
+    '<div class="stat"><span>' + fmtHours(dur) + ' h</span><label>durée totale</label></div>' +
+    '<div class="stat"><span>' + dp + '</span><label>m D+ au total</label></div>' +
+    '<div class="stat"><span>' + runs.length + '</span><label>séances enregistrées</label></div>' +
+    "</div>";
+  html += '<div class="stat-cards">' +
+    '<div class="stat"><span>' + (p.fcm || "—") + '</span><label>FC max (profil)</label></div>' +
+    '<div class="stat"><span>' + (p.repos != null ? p.repos : "—") + '</span><label>FC de repos</label></div>' +
+    '<div class="stat"><span>' + (hrAvg || "—") + '</span><label>FC moy. des séances Polar</label></div>' +
+    '<div class="stat"><span>' + (hrMax || "—") + '</span><label>FC max atteinte (Polar)</label></div>' +
+    "</div>";
+  html += '<div class="stat-cards">' +
+    '<div class="stat"><span>' + (p.vo2 || "—") + '</span><label>VO2max (ml/kg/min)</label></div>' +
+    '<div class="stat"><span>' + (p.vma || "—") + '</span><label>VMA (km/h)</label></div>' +
+    '<div class="stat"><span>' + (p.poids || "—") + '</span><label>poids (kg)</label></div>' +
+    "</div>";
+  if (!p.fcm && !p.vo2) html += '<div class="muted small">FC max, FC de repos, poids et VO2max viennent du profil Polar : connecte la montre puis « Actualiser le profil » (Paramètres > Réglages).</div>';
+  /* répartition par type de séance */
+  const types = sessionTypes();
+  if (types.length) {
+    html += "<h3>Par type de séance</h3>";
+    html += '<div class="table-wrap"><table class="run-sheet"><thead><tr>' +
+      "<th>Type</th><th>Séances</th><th>km</th><th>Durée</th><th>D+</th></tr></thead><tbody>";
+    types.forEach(c => {
+      const rs = runs.filter(r => r.code === c);
+      const tkm = rs.reduce((s, r) => s + (r.dist || 0), 0);
+      const tdur = rs.reduce((s, r) => s + (r.dur || 0), 0);
+      const tdp = rs.reduce((s, r) => s + (r.dplus || 0), 0);
+      html += "<tr><td>" + typeChip(c) + "</td><td>" + rs.length + "</td><td>" +
+        tkm.toFixed(1).replace(".", ",") + "</td><td>" + fmtHours(tdur) + " h</td><td>" + tdp + "</td></tr>";
+    });
+    html += "</tbody></table></div>";
+  }
+  /* répartition du temps par zone de FC (sessions Polar enrichies) */
+  const zRuns = runs.filter(r => r.polar && r.polar.zones && r.polar.zones.some(z => z.min != null));
+  if (zRuns.length) {
+    const nZ = 5;
+    const tot = new Array(nZ).fill(0);
+    zRuns.forEach(r => r.polar.zones.forEach((z, i) => { if (i < nZ) tot[i] += z.min || 0; }));
+    const sum = tot.reduce((a, b) => a + b, 0) || 1;
+    html += "<h3>Temps par zone de FC</h3>" +
+      '<div class="hr-zones"><div class="hr-zones-bar">' +
+      tot.map((m, i) => '<div class="hr-zone-seg" style="width:' + Math.max(100 * m / sum, 1) + "%;background:" + HR_ZONE_COLORS[i] + '"></div>').join("") +
+      "</div>" +
+      '<div class="hr-zones-legend">' + tot.map((m, i) =>
+        '<span><i style="background:' + HR_ZONE_COLORS[i] + '"></i>Z' + (i + 1) + " · " + fmtHours(m) + " h (" + Math.round(100 * m / sum) + " %)</span>").join("") + "</div></div>" +
+      '<div class="muted small">Z1-Z2 = charge légère (récupération, endurance fondamentale) · Z3 = modérée (endurance active) · Z4 = lourde (seuil) · Z5 = très lourde (VMA). Le plan est ~80/20 : l\'essentiel du temps doit être en Z1-Z3.</div>';
+  }
+  $("#view-stats").innerHTML = html;
 }
 
 function runCardHTML(r) {
   const ty = TYPES[r.code] || { label: r.code };
   const shoe = state.shoes.find(s => s.id === r.shoeId);
   const pace = r.dist > 0 && r.dur > 0 ? r.dur / r.dist : null;
-  let html = '<div class="run-card" data-id="' + r.id + '">' +
+  const phr = r.polar && r.polar.hr;
+  let html = '<div class="run-card" data-id="' + r.id + '" id="run-card-' + r.id + '">' +
     '<div class="run-head"><b>' + esc(fmtDateShort(parseDate(r.date))) + "</b> " + typeChip(r.code) +
     (r.planned ? '<span class="muted">(' + esc(r.planned) + ")</span>" : "") +
+    hrLoadBadgeHTML(r) +
     '<span class="spacer"></span><button class="mini-btn" data-edit="' + r.id + '">Modifier</button>' +
     '<button class="icon-btn del" data-del="' + r.id + '" title="Supprimer">✕</button></div>' +
     '<div class="run-stats">' +
@@ -1470,14 +2248,18 @@ function runCardHTML(r) {
     stat(r.dplus + " m", "D+") +
     stat(r.dist && r.dur ? (r.dist / (r.dur / 60)).toFixed(1).replace(".", ",") + " km/h" : "—", "vitesse moy.") +
     stat(pace ? Math.floor(pace) + "'" + String(Math.round((pace % 1) * 60)).padStart(2, "0") + '"/km' : "—", "allure") +
+    stat(phr ? phr.average + " / " + phr.maximum : "—", "FC moy / max (bpm)") +
+    stat(r.polar && r.polar.calories != null ? r.polar.calories + " kcal" : "—", "calories") +
     stat(r.route ? esc(routeLabel(r.route)) : "—", "type de route") +
     stat(r.feel ? r.feel + "/10" : "—", "sensations") +
     stat(r.knee != null ? r.knee + "/10" : "—", "essuie-glace") +
     stat(r.ankle != null ? r.ankle + "/10" : "—", "cheville") +
     "</div>" +
+    hrZonesHTML(r) +
     (shoe ? '<div class="muted small">Chaussures : ' + esc(shoe.name) + " · cumul " + shoeKm(shoe).toFixed(1).replace(".", ",") + " km</div>" : "") +
     (r.notes ? '<div class="run-notes">' + esc(r.notes) + "</div>" : "") +
     (r.points && r.points.length > 1 ? Geo.profileSVG(r.points) : "") +
+    hrChartSVG(r) +
     '<div class="row-actions">' +
     (r.points && r.points.length > 1 ? '<button class="btn" data-export="' + r.id + '">Exporter le GPX</button>' +
       '<button class="btn" data-plots="' + r.id + '">Courbes (altitude · vitesse · FC)</button>' : "") +
@@ -1486,8 +2268,63 @@ function runCardHTML(r) {
 }
 function stat(v, label) { return '<div class="run-stat"><span>' + v + "</span><label>" + label + "</label></div>"; }
 
-function bindRunsEvents(sorted) {
-  $("#rec-start").addEventListener("click", startRecording);
+/* ---- zones de FC Polar : barre par zone + badge de charge + courbe de FC ---- */
+const HR_ZONE_COLORS = ["#9aa7b8", "#4a90d9", "#3fbf7f", "#e6c229", "#e05252"];
+function hrLoadBadgeHTML(r) {
+  const p = r.polar;
+  if (!p || !p.load) return "";
+  const cls = p.zone <= 2 ? "lo" : p.zone === 3 ? "mid" : "hi";
+  return ' <span class="badge hr-load-' + cls + '">Charge ' + esc(p.load) + " · zone " + p.zone + "/5</span>";
+}
+function hrZonesHTML(r) {
+  const z = r.polar && r.polar.zones;
+  if (!Array.isArray(z) || !z.length) return "";
+  let html = '<div class="hr-zones">';
+  if (z.some(x => x.pct != null)) {
+    html += '<div class="hr-zones-bar">' + z.map((zz, i) =>
+      '<div class="hr-zone-seg" style="width:' + Math.max(zz.pct || 0, 1) + "%;background:" + HR_ZONE_COLORS[i] + '"></div>').join("") + "</div>";
+  }
+  html += '<div class="hr-zones-legend">' + z.map((zz, i) =>
+    '<span><i style="background:' + HR_ZONE_COLORS[i] + '"></i>Z' + (i + 1) + " " + zz.lo + "-" + zz.hi +
+    (zz.min != null ? " · " + zz.min + "'" : "") + (zz.pct != null ? " · " + zz.pct + " %" : "") + "</span>").join("") + "</div>";
+  html += "</div>";
+  return html;
+}
+/* courbe de FC compacte avec bandes de zones en fond */
+function hrChartSVG(r) {
+  /* polar.hr peut être une série (import détaillé Polar) OU un résumé
+     {average, maximum} (import sans échantillons) : la courbe n'existe
+     que pour une vraie série, sinon elle casse tout l'affichage */
+  const hr = r.polar && r.polar.hr;
+  if (!Array.isArray(hr) || hr.length < 5) return "";
+  const z = (r.polar.zones || []).length ? r.polar.zones : null;
+  const W = 640, H = 100, pad = 4;
+  const lo = Math.min(...hr), hi = Math.max(...hr) + 5;
+  const y = v => H - pad - (v - lo) / Math.max(1, hi - lo) * (H - 2 * pad);
+  let bands = "";
+  if (z) {
+    bands = z.map((zz, i) => {
+      const y1 = y(Math.min(zz.hi, hi)), y2 = y(Math.max(zz.lo, lo));
+      return '<rect x="0" y="' + Math.max(y1, pad) + '" width="' + W + '" height="' + Math.max(0, Math.min(y2, H - pad) - Math.max(y1, pad)) +
+        '" fill="' + HR_ZONE_COLORS[i] + '" opacity="0.15"/>';
+    }).join("");
+  }
+  const pts = hr.map((v, i) => (i / (hr.length - 1) * W).toFixed(1) + "," + y(v).toFixed(1)).join(" ");
+  return '<svg class="hr-chart" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" role="img" aria-label="Courbe de fréquence cardiaque">' +
+    bands + '<polyline points="' + pts + '" fill="none" stroke="#ff7d6e" stroke-width="1.5"/>' +
+    "</svg>";
+}
+
+function bindNewEvents() {
+  /* démarrer / suivre l'enregistrement GPS depuis « Nouveau » */
+  const recStart = $("#new-rec-start");
+  if (recStart) recStart.addEventListener("click", () => {
+    startRecording();
+    activateView("traces");
+  });
+  const recView = $("#new-rec-view");
+  if (recView) recView.addEventListener("click", () => activateView("traces"));
+  /* formulaire manuel : check-list sortie longue + sauvegarde */
   const codeSel = $("#rf-code"), slc = $("#rf-slcheck");
   const updSl = () => {
     if (codeSel && slc && codeSel.value === "SL") {
@@ -1496,20 +2333,44 @@ function bindRunsEvents(sorted) {
     } else if (slc) slc.style.display = "none";
   };
   if (codeSel) { codeSel.addEventListener("change", updSl); updSl(); }
-  $("#rec-stop").addEventListener("click", stopRecording);
-  $("#rec-cancel").addEventListener("click", cancelRecording);
-  $("#rec-pause").addEventListener("click", () => {
-    if (!Recorder.active) return;
-    Recorder.paused ? Recorder.unpause() : Recorder.pause();
-    recButtonsState(); paintRecBanner();
-    toast(Recorder.paused ? "Enregistrement en pause." : "Enregistrement repris.");
-  });
-  recButtonsState();
-  if (Recorder.active) paintRecorderUI(Recorder.live());
-  $("#rf-save").addEventListener("click", saveRunFromForm);
+  const rfSave = $("#rf-save");
+  if (rfSave) rfSave.addEventListener("click", saveRunFromForm);
+  /* minuteur fractionné de la séance proposée */
   $$("button[data-open-timer]").forEach(b => b.addEventListener("click", () => {
     const ty = TYPES[b.dataset.openTimer];
     if (ty.timer) openTimer("Séance " + ty.label, ty.timer, { noLog: true });
+  }));
+  /* import GPX */
+  const gpxInput = $("#rf-gpx");
+  if (gpxInput) gpxInput.addEventListener("change", async () => {
+    const files = Array.from(gpxInput.files || []);
+    gpxInput.value = "";
+    for (const f of files) {
+      try {
+        const pts = Geo.parseGpx(await f.text());
+        const s = Geo.stats(pts);
+        const run = {
+          id: state.seq++, date: isoDate(new Date()), code: "AUTRE",
+          dist: Math.round(s.dist * 100) / 100, dur: Math.round(s.dur / 60),
+          dplus: s.dplus, feel: null, knee: null, ankle: null, notes: "Import GPX : " + f.name,
+          shoeId: null, points: Geo.compact(pts, 800), planned: null,
+          planKey: (function (pe) { return pe ? itemKey(pe.w, pe.d, pe.i) : null; })(plannedRunEntry(isoDate(new Date())))
+        };
+        state.runs.push(run); save();
+        toast("GPX importé : " + s.dist.toFixed(1) + " km, " + s.dplus + " m D+.");
+      } catch (err) { toast("Erreur GPX : " + err.message); }
+    }
+    showView("sessions");
+  });
+}
+
+function bindSessionsEvents(sorted) {
+  /* filtres par type */
+  $$("button[data-sfilter]").forEach(b => b.addEventListener("click", () => { sessionFilter = b.dataset.sfilter; renderSessions(); }));
+  /* lignes du résumé : hyperlien vers la fiche détaillée */
+  $$("tr[data-focus-run]").forEach(tr => tr.addEventListener("click", e => {
+    if (e.target.closest("button")) return; // les boutons de la ligne ont leur propre action
+    focusRunCard(+tr.dataset.focusRun);
   }));
   $$("button[data-del]").forEach(b => b.addEventListener("click", () => {
     const id = +b.dataset.del;
@@ -1518,8 +2379,8 @@ function bindRunsEvents(sorted) {
     const removed = state.runs[idx];
     state.runs.splice(idx, 1);
     if (removed.trackRef && ServerSync.on) fetch("api/track?id=" + removed.trackRef, { method: "DELETE" }).catch(() => {});
-    save(); renderRuns(); updateHeader();
-    toast("Sortie supprimée.", { label: "Annuler", fn: () => { state.runs.splice(idx, 0, removed); save(); renderRuns(); updateHeader(); } });
+    save(); renderSessions(); updateHeader();
+    toast("Séance supprimée.", { label: "Annuler", fn: () => { state.runs.splice(idx, 0, removed); save(); renderSessions(); updateHeader(); } });
   }));
   $$("button[data-edit]").forEach(b => b.addEventListener("click", () => openEditRun(+b.dataset.edit)));
   $$("button[data-export]").forEach(b => b.addEventListener("click", () => {
@@ -1538,29 +2399,35 @@ function bindRunsEvents(sorted) {
     card.querySelector(".row-actions").after(box);
     b.textContent = "Masquer les courbes";
   }));
-  const gpxInput = $("#rf-gpx");
-  gpxInput.addEventListener("change", async () => {
-    const files = Array.from(gpxInput.files || []);
-    gpxInput.value = "";
-    for (const f of files) {
-      try {
-        const pts = Geo.parseGpx(await f.text());
-        const s = Geo.stats(pts);
-        const run = {
-          id: state.seq++, date: isoDate(new Date()), code: "AUTRE",
-          dist: Math.round(s.dist * 100) / 100, dur: Math.round(s.dur / 60),
-          dplus: s.dplus, feel: null, knee: null, ankle: null, notes: "Import GPX : " + f.name,
-          shoeId: null, points: Geo.compact(pts, 800), planned: null,
-          planKey: (function (pe) { return pe ? itemKey(pe.w, pe.d, pe.i) : null; })(plannedRunEntry(isoDate(new Date())))
-        };
-        state.runs.push(run); save();
-        toast("GPX importé : " + s.dist.toFixed(1) + " km, " + s.dplus + " m D+");
-      } catch (err) { toast("Erreur GPX : " + err.message); }
-    }
-    renderRuns();
-  });
 }
 
+function bindTracesEvents() {
+  /* boutons de l'enregistreur : présents selon l'état (repos / en cours / arrêté) */
+  const onStart = $("#rec-start");
+  if (onStart) onStart.addEventListener("click", startRecording);
+  const onStop = $("#rec-stop");
+  if (onStop) onStop.addEventListener("click", stopRecording);
+  const onCancel = $("#rec-cancel");
+  if (onCancel) onCancel.addEventListener("click", cancelRecording);
+  const onPause = $("#rec-pause");
+  if (onPause) onPause.addEventListener("click", () => {
+    if (!Recorder.active) return;
+    Recorder.paused ? Recorder.unpause() : Recorder.pause();
+    renderTraces();
+    paintRecBanner();
+    toast(Recorder.paused ? "Enregistrement en pause." : "Enregistrement repris.");
+  });
+  const onFinish = $("#rec-finish");
+  if (onFinish) onFinish.addEventListener("click", () => finishStoppedTrace());
+  const onDiscard = $("#rec-discard");
+  if (onDiscard) onDiscard.addEventListener("click", () => discardStoppedTrace());
+  /* liste des traces : ouvrir la visionneuse */
+  $$("button[data-trace]").forEach(b => b.addEventListener("click", () => {
+    openTraceId = +b.dataset.trace;
+    renderTraces();
+  }));
+  if (Recorder.active) { startRecTick(); paintRecorderUI(Recorder.live()); }
+}
 function prefillRunFormFromItem(w, d) {
   const day = effWeek(w).days[d];
   const runItems = day.map(x => x.it).filter(it => RUN_CODES.includes(it.c) && it.c !== "GAM" && it.c !== "LD");
@@ -1589,15 +2456,9 @@ function paintRecorderUI(live) {
   paintRecBanner();
 }
 function recButtonsState() {
-  const b = $("#rec-start"), s = $("#rec-stop"), c = $("#rec-cancel"), p = $("#rec-pause");
-  if (!b) return;
-  b.disabled = Recorder.active;
-  s.disabled = !Recorder.active;
-  c.disabled = !Recorder.active;
-  p.disabled = !Recorder.active;
-  p.textContent = Recorder.paused ? "Reprendre" : "Pause";
-  const note = $("#rec-note");
-  if (note && Recorder.active) note.textContent = "Enregistrement en cours… Tu peux changer d'onglet ou de page : la trace continue et est sauvegardée.";
+  /* repeint la boîte enregistreur de l'onglet Traces selon l'état courant */
+  if ($("#view-traces").classList.contains("active")) renderTraces();
+  paintRecBanner();
 }
 function startRecTick() {
   clearInterval(recTimerIv);
@@ -1619,8 +2480,17 @@ function paintRecBanner() {
     $("#recb-title").textContent = Recorder.paused ? "Enregistrement en pause" : "Enregistrement GPS en cours";
     $("#recb-actions").innerHTML =
       '<button class="btn tiny" id="recb-pause">' + (Recorder.paused ? "Reprendre" : "Pause") + "</button>" +
-      '<button class="btn primary tiny" id="recb-stop">Terminer</button>' +
+      '<button class="btn primary tiny" id="recb-stop">Stop</button>' +
       '<button class="btn tiny" id="recb-cancel">Annuler</button>';
+  } else if (stoppedTrace) {
+    /* trace arrêtée, en attente de « Terminer et noter » ou « Supprimer » */
+    const sstats = Geo.stats(stoppedTrace.pts);
+    b.classList.remove("hidden", "interrupted", "paused");
+    $("#recb-title").textContent = "Trace prête à être notée";
+    $("#recb-stats").textContent = sstats.dist.toFixed(2).replace(".", ",") + " km · " + fmtDur(sstats.dur);
+    $("#recb-actions").innerHTML =
+      '<button class="btn primary tiny" id="recb-finish2">Terminer et noter la sortie</button>' +
+      '<button class="btn tiny" id="recb-discard2">Supprimer la sortie</button>';
   } else {
     const cp = Recorder.hasCheckpoint() ? Recorder.loadCheckpoint() : null;
     if (!cp) { b.classList.add("hidden"); return; }
@@ -1636,17 +2506,19 @@ function paintRecBanner() {
   }
 }
 document.addEventListener("click", e => {
-  if (e.target.closest("#recb-pause")) { Recorder.paused ? Recorder.unpause() : Recorder.pause(); recButtonsState(); paintRecBanner(); return; }
+  if (e.target.closest("#recb-pause")) { Recorder.paused ? Recorder.unpause() : Recorder.pause(); recButtonsState(); return; }
   if (e.target.closest("#recb-stop")) { stopRecording(); return; }
   if (e.target.closest("#recb-cancel")) { cancelRecording(); return; }
   if (e.target.closest("#recb-resume")) { resumeRecording(); return; }
+  if (e.target.closest("#recb-finish2")) { finishStoppedTrace(); return; }
+  if (e.target.closest("#recb-discard2")) { discardStoppedTrace(); return; }
   if (e.target.closest("#recb-finish")) { finishCapture(Recorder.loadCheckpoint().pts, Recorder.loadCheckpoint().dist, null); Recorder.abort(); paintRecBanner(); return; }
   if (e.target.closest("#recb-discard")) { if (confirm("Supprimer la trace enregistrée en cours ?")) { Recorder.abort(); paintRecBanner(); toast("Trace supprimée."); } return; }
 });
 function resumeRecording() {
   Recorder.resume(live => paintRecorderUI(live)).then(() => {
     recButtonsState(); startRecTick(); paintRecBanner();
-    if ($("#view-runs").classList.contains("active")) paintRecorderUI(Recorder.live());
+    if ($("#view-traces").classList.contains("active")) paintRecorderUI(Recorder.live());
     toast("Enregistrement repris — la trace continue.");
   }).catch(err => {
     toast("GPS indisponible (" + err.message + ").");
@@ -1671,7 +2543,7 @@ function finishCapture(pts, dist, dur) {
   const el = Geo.elevation(pendingPoints);
   const km = dist != null ? dist / 1000 : Geo.stats(pendingPoints).dist;
   const minutes = dur != null ? Math.round(dur / 60) : Math.round(Geo.stats(pendingPoints).dur / 60);
-  showView("runs");
+  showView("new");
   $("#rf-date").value = isoDate(new Date());
   $("#rf-dist").value = Math.round(km * 100) / 100;
   $("#rf-dur").value = minutes;
@@ -1686,11 +2558,39 @@ function stopRecording() {
   unlockScreen();
   const r = Recorder.stop();
   clearInterval(recTimerIv); recTimerIv = null;
+  if (r.pts && r.pts.length >= 2) {
+    stoppedTrace = r; // en attente : « Terminer et noter la sortie » ou « Supprimer la sortie »
+    toast("Enregistrement arrêté — note la sortie ou supprime la trace.");
+  } else {
+    stoppedTrace = null;
+    toast("Pas assez de points enregistrés.");
+  }
   recButtonsState();
-  const note = $("#rec-note");
-  if (note) note.textContent = "Enregistrement arrêté.";
-  paintRecBanner();
+}
+/* « Terminer et noter la sortie » : la trace arrêtée part dans le formulaire */
+function finishStoppedTrace() {
+  if (!stoppedTrace) return;
+  const r = stoppedTrace;
+  stoppedTrace = null;
   finishCapture(r.pts, r.dist, r.dur);
+  recButtonsState();
+}
+/* « Supprimer la sortie » : jette la trace arrêtée */
+function discardStoppedTrace() {
+  if (!stoppedTrace) return;
+  if (!confirm("Supprimer la sortie enregistrée ? La trace GPS sera perdue.")) return;
+  stoppedTrace = null;
+  pendingPoints = null;
+  recButtonsState();
+  toast("Sortie supprimée.");
+}
+/* depuis le résumé des sorties : ouvre la fiche détaillée (défilement + surbrillance) */
+function focusRunCard(id) {
+  const card = document.getElementById("run-card-" + id);
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  card.classList.add("flash");
+  setTimeout(() => card.classList.remove("flash"), 1600);
 }
 function cancelRecording() {
   if (!Recorder.active && !Recorder.hasCheckpoint()) return;
@@ -1699,14 +2599,8 @@ function cancelRecording() {
   Recorder.abort();
   clearInterval(recTimerIv); recTimerIv = null;
   pendingPoints = null;
+  stoppedTrace = null;
   recButtonsState();
-  ["rec-time", "rec-dist", "rec-speed", "rec-dplus"].forEach(id => { const el = $("#" + id); if (el) el.textContent = id === "rec-dist" ? "0,00 km" : id === "rec-dplus" ? "0 m" : id === "rec-speed" ? "0,0 km/h" : "00:00:00"; });
-  const e1 = $("#rec-ele"), e2 = $("#rec-acc");
-  if (e1) e1.textContent = "—";
-  if (e2) e2.textContent = "—";
-  const note = $("#rec-note");
-  if (note) note.textContent = "Enregistrement annulé.";
-  paintRecBanner();
   toast("Enregistrement annulé.");
 }
 /* au démarrage : propose la reprise d'un enregistrement interrompu (onglet fermé, page rechargée) */
@@ -1758,8 +2652,8 @@ $("#edit-save").addEventListener("click", () => {
   r.planKey = pe ? itemKey(pe.w, pe.d, pe.i) : null; // la durée réelle remplace les minutes planifiées
   save();
   $("#edit-modal").classList.add("hidden");
-  toast("Sortie corrigée.");
-  renderRuns();
+  toast("Séance corrigée.");
+  renderSessions(); updateHeader();
 });
 let pendingPoints = null;
 
@@ -1771,7 +2665,8 @@ function saveRunFromForm() {
     toast("Indique au moins une distance ou une durée."); return;
   }
   const shoeId = $("#rf-shoe").value ? +$("#rf-shoe").value : null;
-  if (!shoeId) {
+  const isRunCode = RUN_CODES.includes($("#rf-code").value || "AUTRE");
+  if (!shoeId && isRunCode) {
     if (state.shoes.some(s => !s.retired)) {
       toast("Sélectionne la paire de chaussures utilisée — le cumul de km sera mis à jour.");
       $("#rf-shoe").focus();
@@ -1823,8 +2718,8 @@ function saveRunFromForm() {
       const pct = Math.min(100, Math.round(100 * km / shoe.maxKm));
       toast("Sortie enregistrée — " + shoe.name + " : " + km.toFixed(1).replace(".", ",") + " km cumulés (" + pct + " % de sa vie estimée)." + realNoteMsg);
     } else toast("Sortie enregistrée. Bien joué !" + realNoteMsg);
-  } else toast("Sortie enregistrée. Bien joué !" + realNoteMsg);
-  renderRuns();
+  } else toast("Séance enregistrée. Bien joué !" + realNoteMsg);
+  showView("sessions");
 }
 function shoeKm(shoe) {
   return state.runs.filter(r => r.shoeId === shoe.id).reduce((a, r) => a + (r.dist || 0), 0);
@@ -2003,46 +2898,288 @@ const COACH_SUGGESTIONS = [
   "Comment bien vivre mon affûtage ?"
 ];
 
+/* contexte joint à la question du coach : sorties (résumé ou données brutes) + fichiers GPX */
+let coachAttach = { runs: {}, gpx: [] };
+function attachCount() {
+  return Object.keys(coachAttach.runs).length + coachAttach.gpx.length;
+}
+/* ---- conversations : active, navigation, création ---- */
+function activeConv() {
+  let c = state.convs.find(x => x.id === state.convId);
+  if (!c) { c = state.convs[state.convs.length - 1] || null; if (c) state.convId = c.id; }
+  return c;
+}
+function newConv() {
+  const c = { id: ++state.seq, title: "Nouvelle conversation", created: Date.now(), msgs: [] };
+  state.convs.push(c);
+  state.convId = c.id;
+  return c;
+}
+function convBarHTML() {
+  const cur = activeConv();
+  if (!cur) return "";
+  const n = state.convs.length;
+  const idx = state.convs.findIndex(c => c.id === cur.id);
+  return '<div class="conv-bar">' +
+    '<button class="icon-btn" id="conv-prev" title="Conversation précédente"' + (idx > 0 ? "" : " disabled") + ">◀</button>" +
+    '<div class="conv-title" title="' + esc(cur.title) + '"><span>' + esc(cur.title) + "</span>" +
+    (n > 1 ? ' <span class="muted small">' + (idx + 1) + "/" + n + "</span>" : "") + "</div>" +
+    '<button class="icon-btn" id="conv-next" title="Conversation suivante"' + (idx < n - 1 ? "" : " disabled") + ">▶</button>" +
+    '<button class="btn tiny" id="conv-new" title="Démarrer une nouvelle conversation">+ Nouvelle</button>' +
+    '<button class="btn tiny" id="conv-del" title="Supprimer cette conversation">🗑</button>' +
+    "</div>";
+}
+/* ---- pièces jointes : barre GPX toujours visible + liste des sorties repliable ---- */
+function coachAttachBarHTML() {
+  return '<div class="attach-gpx">' +
+    '<label class="btn file-btn">Joindre un GPX<input type="file" id="coach-gpx-file" accept=".gpx,application/gpx+xml,text/xml" multiple></label>' +
+    '<span id="attach-gpx-list">' + coachGpxChipsHTML() + "</span></div>";
+}
+function coachAttachRunsHTML() {
+  const runs = state.runs.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 15);
+  let html = '<details class="coach-attach" id="coach-attach"' + (Object.keys(coachAttach.runs).length ? " open" : "") + ">" +
+    '<summary>Joindre des sorties <span class="badge light" id="attach-count">' + Object.keys(coachAttach.runs).length + " joint" + (Object.keys(coachAttach.runs).length > 1 ? "s" : "") + "</span></summary>" +
+    '<div class="attach-zone">';
+  if (!runs.length) {
+    html += '<div class="muted small">Aucune sortie enregistrée pour l\'instant — enregistre une sortie (onglet Sorties) ou joins un fichier GPX.</div>';
+  } else {
+    html += '<div class="muted small">Coches les sorties à joindre : « résumé » (bilan) ou « données brutes » (points GPS échantillonnés).</div><div class="attach-runs">';
+    runs.forEach(r => {
+      const on = coachAttach.runs[r.id] != null;
+      const mode = coachAttach.runs[r.id] || "resume";
+      const label = (TYPES[r.code] || { label: r.code }).label;
+      html += '<div class="attach-run">' +
+        '<label class="item-l"><input type="checkbox" data-attach="' + r.id + '"' + (on ? " checked" : "") + ">" +
+        typeChip(r.code) + "<span>" + esc(r.date + " · " + label +
+          (r.dist ? " · " + Number(r.dist).toFixed(1).replace(".", ",") + " km" : "") +
+          (r.dur ? " · " + Math.round(r.dur) + " min" : "")) + "</span></label>" +
+        '<select data-attachmode="' + r.id + '"' + (on ? "" : " disabled") + ">" +
+        '<option value="resume"' + (mode === "resume" ? " selected" : "") + ">résumé</option>" +
+        '<option value="brut"' + (mode === "brut" ? " selected" : "") + ">données brutes</option></select>" +
+        "</div>";
+    });
+    html += "</div>";
+  }
+  return html + "</div></details>";
+}
+function coachGpxChipsHTML() {
+  return coachAttach.gpx.map((g, i) =>
+    '<span class="gpx-chip">' + esc(g.name) + " · " + g.pts.length + " pts" +
+    ' <button type="button" data-gpxdel="' + i + '" title="Retirer">×</button></span>').join("") || "";
+}
+/* lecture d'un fichier : API moderne si dispo, sinon FileReader */
+function readFile(f) {
+  if (f.text) return f.text();
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.onerror = () => rej(new Error("lecture impossible"));
+    fr.readAsText(f);
+  });
+}
+
 function renderCoach() {
+  if (!state.convs.length) newConv();   // au moins une conversation (barre ◀ ▶ toujours présente)
   let html = "<h2>Coach IA — Trail</h2>" +
     '<div class="muted sub">Un coach Mistral AI embarqué, informé en direct de ton programme réalisé, de tes sorties, ' +
-    "de tes douleurs et de l'usure de tes chaussures (skill « coach trail »).</div>";
+    "de tes douleurs et de l'usure de tes chaussures (skill « coach trail »). " +
+    "Les conversations sont conservées et synchronisées entre appareils — navigue avec les flèches ◀ ▶.</div>";
   if (!state.mistral.key) {
     html += '<div class="note">Pour activer le coach, entre ta clé API Mistral dans l\'onglet <b>Réglages</b> ' +
       "(crée une clé sur console.mistral.com — l'offre gratuite suffit). La clé reste dans ce navigateur.</div>";
   }
   html += '<div class="coach-wrap">' +
+    convBarHTML() +
     '<div class="coach-msgs" id="coach-msgs">' + coachMsgsHTML() + "</div>" +
+    coachAttachBarHTML() +
+    coachAttachRunsHTML() +
+    '<details class="coach-sugg-det" id="coach-sugg-det">' +
+    '<summary>Idées de questions <span class="muted small">— clique pour dérouler</span></summary>' +
     '<div class="row-actions coach-sugg">' + COACH_SUGGESTIONS.map(s =>
-      '<button class="mini-btn" data-sugg="' + esc(s) + '">' + esc(s) + "</button>").join("") + "</div>" +
+      '<button class="mini-btn" data-sugg="' + esc(s) + '">' + esc(s) + "</button>").join("") + "</div></details>" +
     '<div class="coach-input">' +
-    '<textarea id="coach-in" rows="2" placeholder="Pose ta question au coach…"></textarea>' +
+    '<textarea id="coach-in" rows="2" placeholder="Pose ta question au coach… (les éléments joints ci-dessus seront inclus)"></textarea>' +
     '<button class="btn primary" id="coach-send">Envoyer</button>' +
-    '<button class="btn" id="coach-clear" title="Effacer la conversation">🗑</button>' +
     "</div></div>";
   $("#view-coach").innerHTML = html;
   $("#coach-send").addEventListener("click", sendCoach);
   $("#coach-in").addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendCoach(); }
   });
-  $("#coach-clear").addEventListener("click", () => {
-    if (state.chat.length && confirm("Effacer la conversation ?")) { state.chat = []; save(); renderCoach(); }
+  /* navigation entre conversations (◀ ▶) */
+  const idx = () => state.convs.findIndex(c => c.id === state.convId);
+  const nav = d => {
+    const i = idx() + d;
+    if (i >= 0 && i < state.convs.length) { state.convId = state.convs[i].id; save(); renderCoach(); }
+  };
+  const prev = $("#conv-prev"); if (prev) prev.addEventListener("click", () => nav(-1));
+  const next = $("#conv-next"); if (next) next.addEventListener("click", () => nav(1));
+  const newBtn = $("#conv-new");
+  if (newBtn) newBtn.addEventListener("click", () => {
+    const cur = activeConv();
+    if (cur && !cur.msgs.length) { toast("Tu es déjà dans une conversation vide."); return; }
+    newConv(); save(); renderCoach();
+  });
+  const del = $("#conv-del");
+  if (del) del.addEventListener("click", () => {
+    const cur = activeConv();
+    if (!cur || !cur.msgs.length) { toast("Rien à supprimer dans cette conversation."); return; }
+    if (!confirm("Supprimer cette conversation ?")) return;
+    const i = idx();
+    state.convs = state.convs.filter(c => c.id !== state.convId);
+    if (!state.convs.length) newConv();
+    else state.convId = state.convs[Math.min(i, state.convs.length - 1)].id;
+    save(); renderCoach();
   });
   $$("button[data-sugg]").forEach(b => b.addEventListener("click", () => {
     $("#coach-in").value = b.dataset.sugg; sendCoach();
   }));
+  /* pièces jointes : cochages, mode résumé/brut, GPX */
+  $$("input[data-attach]").forEach(cb => cb.addEventListener("change", () => {
+    const id = cb.dataset.attach;
+    const sel = $('select[data-attachmode="' + id + '"]');
+    if (cb.checked) { if (coachAttach.runs[id] == null) coachAttach.runs[id] = "resume"; if (sel) sel.disabled = false; }
+    else { delete coachAttach.runs[id]; if (sel) sel.disabled = true; }
+    updateAttachCount();
+  }));
+  $$("select[data-attachmode]").forEach(sel => sel.addEventListener("change", () => {
+    coachAttach.runs[sel.dataset.attachmode] = sel.value;
+  }));
+  $("#coach-gpx-file").addEventListener("change", async e => {
+    for (const f of Array.from(e.target.files || [])) {
+      try {
+        const txt = await readFile(f);
+        const pts = Geo.parseGpx(txt);
+        coachAttach.gpx.push({ name: f.name, pts });
+        toast("GPX joint : " + f.name + " (" + pts.length + " points).");
+      } catch (err) {
+        toast("GPX illisible (" + f.name + ") : " + err.message);
+      }
+    }
+    e.target.value = "";
+    $("#attach-gpx-list").innerHTML = coachGpxChipsHTML();
+    bindGpxDel();
+  });
+  bindGpxDel();
   scrollCoachBottom();
+}
+function bindGpxDel() {
+  $$("button[data-gpxdel]").forEach(b => b.addEventListener("click", () => {
+    coachAttach.gpx.splice(+b.dataset.gpxdel, 1);
+    $("#attach-gpx-list").innerHTML = coachGpxChipsHTML();
+    bindGpxDel();
+    updateAttachCount();
+  }));
+}
+function updateAttachCount() {
+  const el = $("#attach-count"), n = Object.keys(coachAttach.runs).length;
+  if (el) { el.textContent = n + " joint" + (n > 1 ? "s" : ""); }
+  const det = $("#coach-attach");
+  if (det && n) det.open = true;
+}
+
+/* petit lecteur Markdown (sans dépendance) pour les réponses du coach :
+   titres, listes, gras/italique, code, citations, liens, tableaux, règles. */
+function mdToHTML(src) {
+  const lines = String(src || "").replace(/\r/g, "").split("\n");
+  let html = "", list = null, para = [], inCode = false, inTable = false;
+  const inline = s => esc(s)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[\s(«])\*([^*\n]+)\*/g, "$1<i>$2</i>")
+    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const closePara = () => { if (para.length) { html += "<p>" + para.join("<br>") + "</p>"; para = []; } };
+  const closeList = () => { if (list) { html += "</" + list + ">"; list = null; } };
+  const closeTable = () => { if (inTable) { html += "</tbody></table>"; inTable = false; } };
+  const flushAll = () => { closePara(); closeList(); closeTable(); };
+  for (const line of lines) {
+    if (inCode) {
+      if (/^\s*```/.test(line)) { html += "</code></pre>"; inCode = false; }
+      else html += esc(line) + "\n";
+      continue;
+    }
+    if (/^\s*```/.test(line)) { flushAll(); html += '<pre class="md-pre"><code>'; inCode = true; continue; }
+    if (line.indexOf("|") !== -1 && line.trim().length > 2) {
+      const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+      if (cells.every(c => /^:?-{2,}:?$/.test(c))) continue;   // ligne séparatrice
+      if (!inTable) { flushAll(); html += '<table class="md-table"><tbody>'; inTable = true; }
+      html += "<tr>" + cells.map(c => "<td>" + inline(c) + "</td>").join("") + "</tr>";
+      continue;
+    }
+    if (inTable) closeTable();
+    const h = line.match(/^#{1,6}\s+(.*)$/);
+    if (h) { flushAll(); html += "<h5>" + inline(h[1]) + "</h5>"; continue; }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) { flushAll(); html += "<hr>"; continue; }
+    const bq = line.match(/^\s*>\s?(.*)$/);
+    if (bq) { flushAll(); html += "<blockquote>" + inline(bq[1]) + "</blockquote>"; continue; }
+    const ul = line.match(/^\s*[-*•]\s+(.*)$/);
+    if (ul) { closePara(); closeTable(); if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; } html += "<li>" + inline(ul[1]) + "</li>"; continue; }
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (ol) { closePara(); closeTable(); if (list !== "ol") { closeList(); html += "<ol>"; list = "ol"; } html += "<li>" + inline(ol[1]) + "</li>"; continue; }
+    if (!line.trim()) { flushAll(); continue; }
+    para.push(inline(line.trim()));
+  }
+  if (inCode) html += "</code></pre>";
+  flushAll();
+  return html;
 }
 
 function coachMsgsHTML() {
-  if (!state.chat.length)
+  const conv = activeConv();
+  const msgs = conv ? conv.msgs : [];
+  if (!msgs.length)
     return '<div class="muted coach-empty">Exemples de questions : clique sur une suggestion ci-dessous.</div>';
-  return state.chat.map(m =>
-    '<div class="coach-msg ' + (m.role === "user" ? "me" : "ai") + '"><div class="coach-bubble">' +
-    m.content.split("\n").map(l => esc(l)).join("<br>") + "</div></div>").join("");
+  return msgs.map(m => {
+    const isAI = m.role !== "user";
+    return '<div class="coach-msg ' + (isAI ? "ai" : "me") + '"><div class="coach-bubble">' +
+      (isAI ? mdToHTML(m.content) :
+        esc(m.display != null ? m.display : m.content).split("\n").join("<br>")) +
+      "</div></div>";
+  }).join("");
 }
 function scrollCoachBottom() {
   const box = $("#coach-msgs"); if (box) box.scrollTop = box.scrollHeight;
+}
+
+/* construction du bloc [CONTEXTE JOINT] ajouté à la question */
+function ptsToRaw(pts, max) {
+  if (!pts || pts.length < 2) return "(pas de points GPS)";
+  const d = Geo.decimate(pts, max || 120);
+  const t0 = d[0].t || 0;
+  return d.map(x => Math.round((x.t - t0) / 1000) + " " + x.lat.toFixed(5) + " " + x.lon.toFixed(5) +
+    " " + (x.ele == null ? "-" : Math.round(x.ele)) + (x.hr != null ? " " + Math.round(x.hr) : "")).join("\n   ");
+}
+function buildCoachAttachments() {
+  const parts = [];
+  Object.keys(coachAttach.runs).forEach(k => {
+    const r = state.runs.find(x => x.id === +k);
+    if (!r) return;
+    const bits = [];
+    if (r.dist) bits.push("distance " + Number(r.dist).toFixed(2).replace(".", ",") + " km");
+    if (r.dur) bits.push("durée " + Math.round(r.dur) + " min");
+    if (r.dplus) bits.push("D+ " + r.dplus + " m");
+    if (r.route) bits.push("terrain " + routeLabel(r.route));
+    if (r.feel != null) bits.push("sensations " + r.feel + "/10");
+    if (r.knee != null) bits.push("douleur essuie-glace " + r.knee + "/10");
+    if (r.ankle != null) bits.push("douleur cheville " + r.ankle + "/10");
+    if (r.notes) bits.push('notes "' + r.notes + '"');
+    let p = "-- Sortie du " + r.date + " (" + ((TYPES[r.code] || { label: r.code }).label) + ") :\n   " + (bits.join(" · ") || "données incomplètes");
+    if (coachAttach.runs[k] === "brut") {
+      p += "\n   données brutes, colonnes t (s) lat lon élévation" + (r.points && r.points.some(x => x.hr != null) ? " FC" : "") + " :";
+      p += "\n   " + ptsToRaw(r.points, 120);
+    }
+    parts.push(p);
+  });
+  coachAttach.gpx.forEach(g => {
+    const st = Geo.stats(g.pts);
+    parts.push('-- GPX "' + g.name + '" : ' +
+      st.dist.toFixed(2).replace(".", ",") + " km, " + Math.round(st.dur / 60) + " min, " +
+      st.dplus + " m D+ / " + st.dminus + " m D-" +
+      (isFinite(st.minEle) && isFinite(st.maxEle) ? ", altitude " + Math.round(st.minEle) + "–" + Math.round(st.maxEle) + " m" : "") +
+      "\n   points, colonnes t (s) lat lon élévation" + (g.pts.some(x => x.hr != null) ? " FC" : "") + " :" +
+      "\n   " + ptsToRaw(g.pts, 120));
+  });
+  return parts.length ? "[CONTEXTE JOINT PAR LE COUREUR]\n" + parts.join("\n") : "";
 }
 
 async function sendCoach() {
@@ -2054,8 +3191,12 @@ async function sendCoach() {
     showView("settings"); return;
   }
   input.value = "";
-  state.chat.push({ role: "user", content: q });
-  if (state.chat.length > 60) state.chat = state.chat.slice(-60);
+  const conv = activeConv() || newConv();
+  const attach = buildCoachAttachments();
+  const full = attach ? q + "\n\n" + attach : q;
+  if (!conv.msgs.length) conv.title = q.slice(0, 42) + (q.length > 42 ? "…" : "");
+  conv.msgs.push({ id: ++state.seq, ts: Date.now(), role: "user", content: full, display: q });
+  if (conv.msgs.length > 200) conv.msgs = conv.msgs.slice(-200);
   save();
   // indicateur « en train d'écrire »
   const box = $("#coach-msgs");
@@ -2063,7 +3204,7 @@ async function sendCoach() {
   scrollCoachBottom();
   try {
     const messages = [{ role: "system", content: coachContext() },
-      ...state.chat.slice(-20).map(m => ({ role: m.role, content: m.content }))];
+      ...conv.msgs.slice(-30).map(m => ({ role: m.role, content: m.content }))];
     const res = await fetch(state.mistral.url + "/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + state.mistral.key },
@@ -2076,12 +3217,12 @@ async function sendCoach() {
     const data = await res.json();
     const reply = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
     if (!reply) throw new Error("réponse vide de l'API");
-    state.chat.push({ role: "assistant", content: reply.trim() });
+    conv.msgs.push({ id: ++state.seq, ts: Date.now(), role: "assistant", content: reply.trim() });
     save();
   } catch (err) {
     let msg = "Erreur du coach : " + err.message;
     if (String(err).includes("Failed to fetch")) msg = "Impossible de joindre l'API Mistral (réseau, CORS ou clé invalide). Vérifie ta connexion et ta clé dans Réglages.";
-    state.chat.push({ role: "assistant", content: msg });
+    conv.msgs.push({ id: ++state.seq, ts: Date.now(), role: "assistant", content: msg });
     save();
   }
   renderCoach();
@@ -2119,6 +3260,7 @@ function renderSettings() {
     '<label>FC repos (bpm) <input type="number" id="st-resthr" min="30" max="110" placeholder="ex. 48" value="' + (state.profile && state.profile.repos != null ? state.profile.repos : "") + '"></label>' +
     '<label>Poids (kg) <input type="number" id="st-weight" min="35" max="150" step="0.1" placeholder="ex. 72,5" value="' + (state.profile && state.profile.poids != null ? state.profile.poids : "") + '"></label>' +
     '<label>VMA (km/h) <input type="number" id="st-vma" min="8" max="25" step="0.1" placeholder="ex. 13,5" value="' + (state.profile && state.profile.vma != null ? state.profile.vma : "") + '"></label>' +
+    '<label>VO2max (ml/kg/min) <input type="number" id="st-vo2" min="20" max="80" step="0.1" placeholder="ex. 52" value="' + (state.profile && state.profile.vo2 != null ? state.profile.vo2 : "") + '"></label>' +
     "</div>" +
     '<div class="muted small">Le profil affine les séances (zones réelles affichées dans les séances qualité) et alimente le coach IA. ' +
     "FC max au choix : test de terrain, ou 208 − 0,7 × âge en première approximation.</div>" +
@@ -2139,6 +3281,8 @@ function renderSettings() {
     "</div>" +
     '<div class="muted small">La clé est stockée uniquement dans ce navigateur et envoyée directement à api.mistral.ai. ' +
     "Le skill « coach trail » transmet à chaque question : semaine en cours, séances cochées, dernières sorties, douleurs, usure des chaussures.</div>" +
+    "<h3>Montre Polar (Vantage M3)</h3>" +
+    '<div id="polar-box"></div>' +
     '<div class="row-actions"><button class="btn primary" id="st-save">Enregistrer</button>' +
     '<button class="btn" id="st-test">Tester la connexion au coach</button>' +
     '<button class="btn" id="st-export">Exporter mes données (JSON)</button>' +
@@ -2163,9 +3307,9 @@ function renderSettings() {
   $("#st-save").addEventListener("click", () => {
     state.start = $("#st-start").value || DEFAULT_START;
     state.password = $("#st-pass").value.trim() || null;
-    const fcm = +$("#st-fcm").value, repos = +$("#st-resthr").value, poids = +$("#st-weight").value, vma = +$("#st-vma").value;
-    state.profile = (fcm || repos || poids || vma)
-      ? { fcm: fcm || null, repos: repos || null, poids: poids || null, vma: vma || null }
+    const fcm = +$("#st-fcm").value, repos = +$("#st-resthr").value, poids = +$("#st-weight").value, vma = +$("#st-vma").value, vo2 = +$("#st-vo2").value;
+    state.profile = (fcm || repos || poids || vma || vo2)
+      ? { fcm: fcm || null, repos: repos || null, poids: poids || null, vma: vma || null, vo2: vo2 || null }
       : null;
     state.ui.theme = $("#st-theme").value;
     state.ui.font = +$("#st-font").value;
@@ -2209,7 +3353,8 @@ function renderSettings() {
     const keep = state.mistral; // on garde la clé API
     const keepPass = state.password; // et le mot de passe
     const keepUi = state.ui; // et les préférences d'apparence de cet appareil
-    state = { start: DEFAULT_START, done: {}, moves: {}, hidden: {}, custom: [], extra: [], runs: [], shoes: [], lastShoeId: null, seq: 1, lastWeekView: null, mistral: keep, password: keepPass, ui: keepUi, chat: [] };
+    const keepPolar = state.polar; // et l'état de la montre Polar (jeton réel côté serveur)
+    state = { start: DEFAULT_START, done: {}, moves: {}, hidden: {}, custom: [], extra: [], runs: [], shoes: [], lastShoeId: null, seq: 1, lastWeekView: null, mistral: keep, polar: keepPolar, password: keepPass, ui: keepUi, chat: [] };
     save(); toast("Données effacées."); renderSettings(); updateHeader();
   });
 
@@ -2248,6 +3393,9 @@ function renderSettings() {
     catch (err) { toast("Fichier illisible."); }
     e.target.value = "";
   });
+
+  /* ---- montre Polar : statut + boutons (rempli asynchronement) ---- */
+  PolarSync.renderBox();
 }
 
 /* ================= synchronisation des cochages (fusion, sans compte) ================= */
@@ -2342,8 +3490,10 @@ const ServerSync = {
       await this.pull(true);
       await this.loadTracks();
       this.pullTimer = setInterval(() => this.pull(false), 60000); // resynchronisation périodique
+      this.polarTimer = setInterval(() => PolarSync.auto(), 300000); // sorties + récupération Polar toutes les 5 min
     } catch (e) { /* pas de serveur : mode local, rien à faire */ }
     updateStorageBadge();
+    PolarSync.auto(); // import silencieux des sorties de la montre si connectée
   },
 
   async pull(adopt) {
@@ -2362,8 +3512,7 @@ const ServerSync = {
         normalizeState();
         save(); // localStorage + renvoi vers le serveur
         checkLock();
-        const view = document.querySelector("nav#tabs button.active");
-        renderView(view ? view.dataset.view : "today");
+        renderView(curView);
       }
       this.loadTracks();
       slimOldTracks();
@@ -2395,6 +3544,409 @@ const ServerSync = {
   }
 };
 
+/* ================= montre Polar (Vantage M3, API AccessLink via le worker) =================
+   Le worker porte l'OAuth et le jeton ; l'app ne fait que convertir les exercices
+   Polar en sorties TrainingTrail (déduplication par polarId — jamais écrasées).
+   Polar ne fournit que les 30 derniers jours, et uniquement les exercices
+   téléversés APRÈS la connexion de la montre. */
+function polarDurationMin(iso) {
+  /* Polar renvoie des durées ISO 8601, parfois avec des secondes décimales
+     (ex. "PT1379.748S") : le motif doit accepter les décimales. */
+  const p = String(iso || "").match(/PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?/);
+  if (!p) return 0;
+  return Math.round((parseFloat(p[1]) || 0) * 60 + (parseFloat(p[2]) || 0) + (parseFloat(p[3]) || 0) / 60);
+}
+function polarCode(sport, detailed) {
+  const s = String(sport || "").toUpperCase();
+  const d = String(detailed || "").toUpperCase();
+  if (s === "RUNNING" || s.indexOf("RUN") >= 0 || d.indexOf("RUNNING") >= 0 || d.indexOf("TRAIL") >= 0) return "CAP";
+  if (s.indexOf("CYCL") >= 0 || s.indexOf("BIKE") >= 0) return "V";
+  if (s.indexOf("SWIM") >= 0) return "NAT";
+  if (s.indexOf("YOGA") >= 0) return "YOGA";
+  return "AUTRE";
+}
+const PolarSync = {
+  busy: false,
+
+  async status() {
+    try {
+      const res = await fetch("api/polar/status", { cache: "no-store" });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (e) { return null; }
+  },
+  async exercises() {
+    const res = await fetch("api/polar/exercises", { cache: "no-store" });
+    let data = null;
+    try { data = await res.json(); } catch (e) { }
+    if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
+    return data.exercises || [];
+  },
+  async gpx(id) {
+    const res = await fetch("api/polar/gpx?id=" + encodeURIComponent(id), { cache: "no-store" });
+    if (!res.ok) throw new Error("GPX indisponible (" + res.status + ")");
+    return await res.text();
+  },
+  /* détail d'un exercice : zones de FC + séries (samples) en ligne */
+  async detail(id) {
+    const res = await fetch("api/polar/exercise?id=" + encodeURIComponent(id), { cache: "no-store" });
+    let data = null;
+    try { data = await res.json(); } catch (e) { }
+    if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
+    return data.exercise || null;
+  },
+
+  /* ---- zones de fréquence cardiaque Polar (5 zones) + charge de la séance ----
+     Zones par défaut (coureur, montre Vantage M3) : 94-112 / 112-131 / 131-150 /
+     150-168 / 168+. Les vraies limites viennent de l'API quand elles sont
+     disponibles (samples=true&zones=true) ; le temps passé par zone se calcule
+     proportionnellement depuis la série de FC. */
+  enrichRunFromDetail(run, ex) {
+    if (!run.polar) run.polar = {};
+    /* limites de zones : formats défensifs (snake_case / dash / casse) */
+    const num = (x) => typeof x === "number" ? x : parseFloat(x);
+    const zraw = ex && (ex.heart_rate_zones || ex["heart-rate-zones"] || ex.heartRateZones || ex.zones || ex.heart_rate_zones_response);
+    let limits = null;
+    if (Array.isArray(zraw) && zraw.length) {
+      limits = zraw.map(z => {
+        const lo = num(z.lower_limit != null ? z.lower_limit : z.lowerlimit != null ? z.lowerlimit : z["lower-limit"]),
+              hi = num(z.upper_limit != null ? z.upper_limit : z.upperlimit != null ? z.upperlimit : z["upper-limit"]);
+        return (isFinite(lo) && isFinite(hi)) ? [lo, hi] : null;
+      }).filter(Boolean);
+    }
+    if (!limits || limits.length < 2) {
+      const fcm = (state.profile && state.profile.fcm) || 190;
+      limits = [[94, 112], [112, 131], [131, 150], [150, 168], [168, fcm]];
+    }
+    /* série de FC : formats défenses (liste typée ou objet par type) */
+    let hr = null;
+    const findHr = (s) => {
+      if (!s) return null;
+      if (Array.isArray(s)) {
+        for (const item of s) {
+          const t = String(item && (item.type != null ? item.type : item.type_id != null ? item.type_id : item.sample_type != null ? item.sample_type : "")).toLowerCase();
+          const arr = item && (item.data || item.values || item.samples);
+          if (Array.isArray(arr) && (/heart/.test(t) || t === "0" || t === "")) return arr;
+        }
+        return null;
+      }
+      const keys = Object.keys(s);
+      for (const k of keys) {
+        const kk = k.toLowerCase();
+        if (kk.indexOf("heart") >= 0 || kk === "hr" || kk === "0") {
+          const v = s[k];
+          if (Array.isArray(v)) return v;
+          if (v && Array.isArray(v.data)) return v.data;
+        }
+      }
+      return null;
+    };
+    hr = findHr(ex && ex.samples) || findHr(ex && ex.samples && ex.samples.samples);
+    if (hr && hr.length > 4) {
+      hr = hr.filter(v => isFinite(v)).map(Number);
+      /* temps par zone, proportionnel à la durée de l'exercice */
+      const durSec = (run.dur || 0) * 60 || hr.length;
+      const counts = new Array(limits.length).fill(0);
+      hr.forEach(v => {
+        for (let i = 0; i < limits.length; i++) {
+          if (v <= limits[i][1] || i === limits.length - 1) { if (v >= limits[i][0] || i === 0) { counts[i]++; break; } }
+        }
+      });
+      const total = counts.reduce((a, b) => a + b, 0) || 1;
+      run.polar.zones = limits.map((l, i) => ({
+        lo: Math.round(l[0]), hi: Math.round(l[1]),
+        min: Math.round(counts[i] / total * durSec / 60), pct: Math.round(100 * counts[i] / total)
+      }));
+      /* série compacte pour la courbe (max 240 points) */
+      const step = Math.max(1, Math.ceil(hr.length / 240));
+      const series = [];
+      for (let i = 0; i < hr.length; i += step) series.push(Math.round(hr[i]));
+      run.polar.hr = series;
+      run.polar.zonesMax = Math.max(...hr);
+      /* charge : zone dominante */
+      let domi = 0;
+      run.polar.zones.forEach((z, i) => { if (z.pct > run.polar.zones[domi].pct) domi = i; });
+      run.polar.load = domi <= 1 ? "légère" : domi === 2 ? "modérée" : domi === 3 ? "lourde" : "très lourde";
+      run.polar.zone = domi + 1;
+    } else if (run.polar.hr) {
+      run.polar.zones = limits.map((l, i) => ({ lo: Math.round(l[0]), hi: Math.round(l[1]), min: null, pct: null }));
+    }
+    return run;
+  },
+  /* enrichit (ou rattrape) les sorties Polar sans zones : quelques-unes par cycle */
+  async enrichMissing(limit) {
+    if (!ServerSync.on) return;
+    const todo = state.runs.filter(r => r.polarId && (!r.polar || !r.polar.zones)).slice(0, limit || 3);
+    let changed = false;
+    for (const run of todo) {
+      try {
+        const ex = await this.detail(run.polarId);
+        if (ex) { this.enrichRunFromDetail(run, ex); changed = true; }
+      } catch (e) { /* détail indisponible pour cette séance : on garde le résumé */ }
+    }
+    if (changed) {
+      save();
+      if ($("#view-sessions") && $("#view-sessions").classList.contains("active")) renderSessions();
+      if ($("#view-today") && $("#view-today").classList.contains("active")) renderToday();
+    }
+    return todo.length;
+  },
+
+  /* exercice Polar -> sortie TrainingTrail (null si données inexploitables) */
+  async toRun(ex) {
+    if (!ex || !ex.id) return null;
+    /* Polar envoie les champs en snake_case (start_time, has_route…), la doc
+       les écrit avec des tirets : on accepte les deux. */
+    const f = (n) => ex[n] != null ? ex[n] : ex[n.replace(/-/g, "_")];
+    const t0 = Date.parse(f("start-time") || "");
+    if (isNaN(t0)) return null;
+    const date = new Date(t0 + (f("start-time-utc-offset") || 0) * 60000).toISOString().slice(0, 10);
+    let points = null, dplus = 0, gDist = 0, gDur = 0;
+    if (f("has-route")) {
+      try {
+        const pts = Geo.parseGpx(await this.gpx(ex.id));
+        if (pts && pts.length > 1) {
+          const s = Geo.stats(pts);
+          points = Geo.compact(pts, 800);
+          dplus = s.dplus; gDist = Math.round(s.dist * 100) / 100; gDur = Math.round(s.dur / 60);
+        }
+      } catch (e) { /* pas de trace récupérable : on garde le résumé Polar */ }
+    }
+    const pe = plannedRunEntry(date);
+    const run = {
+      id: state.seq++,
+      date,
+      code: polarCode(ex.sport, f("detailed-sport-info")),
+      dist: ex.distance != null ? Math.round(ex.distance / 10) / 100 : gDist,
+      dur: polarDurationMin(ex.duration) || gDur,
+      dplus,
+      feel: null, knee: null, ankle: null,
+      notes: "Importé depuis Polar" + (ex.device ? " (" + ex.device + ")" : "") +
+        (f("running-index") != null ? " · Running Index " + f("running-index") : ""),
+      shoeId: null, route: null,
+      points, trackRef: null,
+      polarId: ex.id,
+      polar: {
+        sport: ex.sport || null,
+        detailed: f("detailed-sport-info") || null,
+        hr: f("heart-rate") || null,
+        ri: f("running-index") != null ? f("running-index") : null,
+        calories: ex.calories != null ? ex.calories : null,
+        load: (ex["training-load"] != null ? ex["training-load"] : (ex.training_load_pro && ex.training_load_pro["cardio-load"] != null ? ex.training_load_pro["cardio-load"] : null))
+      },
+      planned: pe ? pe.it.t : null,
+      planKey: pe ? (pe.isCustom ? customKey(pe.custom.id) : itemKey(pe.w, pe.d, pe.i)) : null
+    };
+    /* trace GPS volumineuse : rangée hors état (R2) quand le serveur le permet */
+    if (run.points && run.points.length > 40 && ServerSync.tracks) {
+      run.trackRef = run.id;
+      fetch("api/track?id=" + run.trackRef, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(run.points)
+      }).catch(() => {});
+      run.points = null;
+    }
+    return run;
+  },
+
+  /* importe toutes les sorties Polar non déjà présentes ; manuel = feedback visible */
+  async import(manual) {
+    if (this.busy || !ServerSync.on) { if (manual && !ServerSync.on) toast("Import Polar : serveur centralisé requis (deploy/worker)."); return; }
+    this.busy = true;
+    try {
+      const list = await this.exercises();
+      let added = 0, km = 0;
+      for (const ex of list) {
+        if (state.runs.some(r => r.polarId === ex.id)) continue;
+        const run = await this.toRun(ex);
+        if (!run) continue;
+        state.runs.push(run);
+        added++; km += run.dist || 0;
+      }
+      const changed = added > 0 || state.polar.lastSync == null;
+      state.polar.lastSync = Date.now();
+      if (changed) save();
+      if (added) {
+        toast("Polar : " + added + " sortie" + (added > 1 ? "s" : "") + " importée" + (added > 1 ? "s" : "") + " (" + km.toFixed(1).replace(".", ",") + " km). Pense à préciser chaussures et douleurs.");
+        updateHeader();
+        this.enrichMissing(5); // zones FC + charge des nouvelles sorties
+        if ($("#view-sessions").classList.contains("active")) renderSessions();
+        if ($("view-today") && $("view-today").classList.contains("active")) renderToday();
+      } else if (manual) toast("Polar : aucune nouvelle sortie. Rappel : seuls les exercices téléversés sur Flow APRÈS la connexion (30 derniers jours) sont transmis — laisse la montre synchroniser, puis réessaie.");
+    } catch (e) {
+      if (manual) toast("Import Polar impossible : " + e.message);
+    } finally { this.busy = false; }
+  },
+
+  /* infos physiques Polar -> profil coureur (FC max, FC repos, poids, VO2max) */
+  async refreshProfile() {
+    const res = await fetch("api/polar/physical-info", { cache: "no-store" });
+    let data = null;
+    try { data = await res.json(); } catch (e) { }
+    if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
+    const info = data.info || {};
+    const p = Object.assign({ fcm: null, repos: null, poids: null, vma: null, vo2: null }, state.profile || {});
+    if (info.maximum_heart_rate) p.fcm = info.maximum_heart_rate;
+    if (info.resting_heart_rate) p.repos = info.resting_heart_rate;
+    if (info.weight) p.poids = info.weight;
+    if (info.vo2_max) p.vo2 = info.vo2_max;
+    state.profile = p;
+    save();
+    return info;
+  },
+
+  async auto() {
+    if (state.polar && state.polar.connected && ServerSync.on) {
+      this.import(false);
+      this.syncRecovery();
+      this.enrichMissing(3); // zones de FC + charge des sorties déjà importées
+    }
+  },
+
+  /* sommeil + Nightly Recharge + charge cardio -> state.polarNights (une clé par
+     date). Échoue silencieusement par source (p. ex. si « Sleep data » n'est pas
+     activé chez Polar). conserve 120 jours maximum. */
+  async syncRecovery() {
+    if (!ServerSync.on || !(state.polar && state.polar.connected)) return false;
+    const to = isoDate(new Date());
+    const from = isoDate(new Date(Date.now() - 27 * 864e5)); // Polar : plage max 28 jours
+    const get = (url) => fetch(url, { cache: "no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null);
+    const [sleep, rec, load] = await Promise.all([
+      get("api/polar/sleep?from=" + from + "&to=" + to),
+      get("api/polar/recharge"),
+      get("api/polar/load")
+    ]);
+    const nights = state.polarNights;
+    let changed = false;
+    const slot = (d) => nights[d] || (nights[d] = {});
+    if (sleep && sleep.ok && Array.isArray(sleep.nights)) {
+      sleep.nights.forEach(n => {
+        if (!n || !n.date) return;
+        const dur = n.sleep_start_time && n.sleep_end_time
+          ? Math.max(0, Math.round((Date.parse(n.sleep_end_time) - Date.parse(n.sleep_start_time)) / 60000)) : null;
+        slot(n.date).slp = {
+          score: n.sleep_score || null,
+          dur,
+          deep: n.deep_sleep != null ? Math.round(n.deep_sleep / 60) : null,
+          rem: n.rem_sleep != null ? Math.round(n.rem_sleep / 60) : null,
+          cont: n.continuity != null ? n.continuity : null
+        };
+        changed = true;
+      });
+    }
+    const recs = rec && rec.ok && Array.isArray(rec.recharges) ? rec.recharges : [];
+    recs.forEach(r => {
+      if (!r || !r.date) return;
+      slot(r.date).rec = {
+        ans: r["ans-charge"] != null ? r["ans-charge"] : null,
+        hrv: r["heart-rate-variability-avg"] != null ? r["heart-rate-variability-avg"] : null,
+        br: r["breathing-rate-avg"] != null ? r["breathing-rate-avg"] : null,
+        hr: r["heart-rate-avg"] != null ? r["heart-rate-avg"] : null,
+        st: r["nightly-recharge-status"] != null ? r["nightly-recharge-status"] : null
+      };
+      changed = true;
+    });
+    const loads = load && load.ok && Array.isArray(load.loads) ? load.loads : [];
+    loads.forEach(l => {
+      if (!l || !l.date || l.cardio_load == null || l.cardio_load < 0) return;
+      slot(l.date).load = {
+        v: l.cardio_load,
+        str: l.strain != null ? l.strain : null,
+        tol: l.tolerance != null && l.tolerance >= 0 ? l.tolerance : null,
+        st: l.cardio_load_status || null
+      };
+      changed = true;
+    });
+    /* taille bornée : ne garde que 120 jours */
+    const cutoff = Date.now() - 120 * 864e5;
+    Object.keys(nights).forEach(d => {
+      if (Date.parse(d) < cutoff) { delete nights[d]; changed = true; }
+    });
+    if (changed) {
+      save();
+      if ($("view-today") && $("view-today").classList.contains("active")) renderToday();
+    }
+    return changed;
+  },
+
+  /* rendu de la section « Montre Polar » des Réglages (statut + boutons) */
+  async renderBox() {
+    const box = $("#polar-box");
+    if (!box) return;
+    if (!ServerSync.on) {
+      box.innerHTML = '<div class="muted small">Nécessite le serveur centralisé (deploy/worker). En hébergement statique : exporte tes sorties depuis Polar Flow (GPX) et importe-les dans l\'onglet Sorties.</div>';
+      return;
+    }
+    box.innerHTML = '<div class="muted small">Vérification…</div>';
+    const st = await this.status();
+    if (!st || !st.ok) {
+      box.innerHTML = '<div class="muted small">Serveur joignable mais Polar non configuré : renseigne POLAR_CLIENT_ID et POLAR_CLIENT_SECRET sur le worker (voir deploy/worker/README.md).</div>';
+      return;
+    }
+    if (state.polar.connected !== !!st.connected) { state.polar.connected = !!st.connected; save(); }
+    if (!st.connected) {
+      box.innerHTML =
+        '<div class="muted small">Montre non connectée. L\'autorisation se fait sur polar.com ; le jeton reste sur le serveur.</div>' +
+        '<div class="muted small">URL de redirection à déclarer chez Polar : <b>' + esc(st.callback) + '</b></div>' +
+        '<div class="row-actions"><button class="btn primary" id="pl-connect">Connecter ma montre Polar</button></div>';
+      const b = $("#pl-connect");
+      if (b) b.addEventListener("click", () => { location.href = "api/polar/connect"; });
+      return;
+    }
+    const last = st.lastSync ? new Date(st.lastSync).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "jamais";
+    box.innerHTML =
+      '<div class="muted small">Montre connectée — dernière synchro : ' + last + '. ' +
+      'Les sorties, le sommeil, la recharge ANS/VFC (Nightly Recharge) et la charge cardio sont synchronisés à chaque ouverture de l\'app puis toutes les 5 minutes.</div>' +
+      '<div class="note">Important : Polar ne transmet que les exercices <b>téléversés sur Polar Flow APRÈS le moment de la connexion</b> de la montre ici (et des 30 derniers jours). Si une sortie est visible dans l\'appli Flow mais pas ici : laisse la montre synchroniser avec le téléphone, puis reviens ici ou appuie sur « Importer les sorties ». Les exercices enregistrés et synchronisés avant la connexion ne seront jamais transmis — c\'est une règle Polar, pas de l\'app.</div>' +
+      '<div class="row-actions">' +
+      '<button class="btn primary" id="pl-import">Importer les sorties Polar</button>' +
+      '<button class="btn" id="pl-profile">Actualiser le profil (FC max, FC repos, poids, VO2max)</button>' +
+      '<button class="btn" id="pl-disconnect">Déconnecter</button></div>';
+    const bi = $("#pl-import");
+    if (bi) bi.addEventListener("click", async () => {
+      bi.disabled = true; bi.textContent = "Import…";
+      await PolarSync.import(true);
+      PolarSync.renderBox();
+    });
+    const bp = $("#pl-profile");
+    if (bp) bp.addEventListener("click", async () => {
+      bp.disabled = true; bp.textContent = "Mise à jour…";
+      try {
+        const info = await PolarSync.refreshProfile();
+        toast("Profil mis à jour depuis Polar" +
+          (info.maximum_heart_rate ? " : FCM " + info.maximum_heart_rate : "") +
+          (info.vo2_max ? ", VO2max " + info.vo2_max : "") + ".");
+        renderSettings(); // rafraîchit les champs profil + zones
+      } catch (e) { toast("Profil Polar impossible : " + e.message); bp.disabled = false; bp.textContent = "Actualiser le profil (FC max, FC repos, poids, VO2max)"; }
+    });
+    const bd = $("#pl-disconnect");
+    if (bd) bd.addEventListener("click", () => { location.href = "api/polar/disconnect"; });
+  }
+};
+
+/* retour d'OAuth Polar : #polar=ok | #polar=off | #polar=err (après rechargement) */
+function importPolarHash() {
+  const m = location.hash.match(/^#polar=(ok|off|err)$/);
+  if (!m) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  if (m[1] === "ok") {
+    state.polar.connected = true;
+    save();
+    toast("Montre Polar connectée — import des sorties en cours…");
+    setTimeout(() => PolarSync.auto(), 1500);
+  } else if (m[1] === "off") {
+    state.polar.connected = false;
+    state.polar.lastSync = null;
+    save();
+    toast("Montre Polar déconnectée.");
+  } else {
+    toast("Échec de la connexion Polar — réessaie depuis Réglages.");
+  }
+}
+
 /* fusion de deux états sans perte : cochages = union, sorties/chaussures = par id
    (l'état le plus récent gagne pour un même enregistrement). Chaque champ requis
    garde une valeur de repli : un état partiel (ancienne version, édition manuelle)
@@ -2406,6 +3958,8 @@ function mergeStates(a, b) {
   const out = {
     start: newer.start || older.start || DEFAULT_START,
     mistral: newer.mistral || older.mistral || { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" },
+    polar: newer.polar || older.polar || { connected: false, lastSync: null },
+    polarNights: mergeByKey(a.polarNights, b.polarNights, newer === b),
     password: newer.password !== undefined ? newer.password : older.password,
     lastShoeId: newer.lastShoeId != null ? newer.lastShoeId : (older.lastShoeId != null ? older.lastShoeId : null),
     lastWeekView: newer.lastWeekView != null ? newer.lastWeekView : older.lastWeekView,
@@ -2436,8 +3990,24 @@ function mergeStates(a, b) {
     if (Object.keys(o).length) out.daily[d] = o;
   });
   out.seq = Math.max(a.seq || 1, b.seq || 1);
-  out.chat = (newer.chat || []).slice(-60);
+  /* conversations coach : fusion par id, messages fusionnés par id à l'intérieur
+     de chaque conversation — l'historique venant d'un autre appareil est ajouté,
+     jamais écrasé */
+  const convsA = convsOf(a), convsB = convsOf(b);
+  out.convs = mergeById(convsA, convsB, newer === b).map(cv => {
+    const ma = (convsA.find(x => x.id === cv.id) || { msgs: [] }).msgs || [];
+    const mb = (convsB.find(x => x.id === cv.id) || { msgs: [] }).msgs || [];
+    return Object.assign({}, cv, { msgs: mergeById(ma, mb, newer === b).slice(-200) });
+  }).sort((x, y) => x.id - y.id);
+  out.convId = out.convs.some(c => c.id === newer.convId) ? newer.convId :
+    (out.convs.length ? out.convs[out.convs.length - 1].id : null);
   return out;
+}
+/* vue « conversations » d'un état (migration à la volée de l'ancien state.chat) */
+function convsOf(st) {
+  if (Array.isArray(st.convs)) return st.convs;
+  const msgs = normalizeMsgs(Array.isArray(st.chat) ? st.chat.slice() : []);
+  return msgs.length ? [{ id: 0, title: "Ancienne conversation", created: 0, msgs }] : [];
 }
 function mergeById(listA, listB, bWins) {
   const map = new Map();
@@ -2480,7 +4050,12 @@ function sortForCompare(st) {
   Object.keys(st.loads || {}).sort().forEach(k => { c.loads[k] = st.loads[k]; });
   c.notes = {};
   Object.keys(st.notes || {}).sort().forEach(k => { c.notes[k] = st.notes[k]; });
-  c.chat = st.chat || [];
+  c.chat = undefined;
+  c.polar = st.polar || null;
+  c.polarNights = {};
+  Object.keys(st.polarNights || {}).sort().forEach(k => { c.polarNights[k] = st.polarNights[k]; });
+  c.convs = (st.convs || []).slice().sort((x, y) => x.id - y.id)
+    .map(cv => Object.assign({}, cv, { msgs: (cv.msgs || []).slice() }));
   return c;
 }
 function updateStorageBadge() {
@@ -2523,14 +4098,18 @@ $("#lock-go").addEventListener("click", tryUnlock);
 $("#lock-pass").addEventListener("keydown", e => { if (e.key === "Enter") tryUnlock(); });
 
 /* ================= démarrage ================= */
-renderToday();
-updateHeader();
+activateView("today");
 importFromHash();
+importPolarHash();
 ServerSync.init();
 offerResume();
 checkLock();
 slimOldTracks();
 applyNav();
+/* zoom verrouillé sur mobile : le pincement à deux doigts est désactivé
+   (Safari iOS ignore user-scalable=no, on bloque donc les gestes) */
+["gesturestart", "gesturechange", "gestureend"].forEach(ev =>
+  document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
 /* application installable + démarrage hors ligne (PWA) */
 if ("serviceWorker" in navigator && (location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(location.hostname)))
   navigator.serviceWorker.register("sw.js").catch(() => {});
