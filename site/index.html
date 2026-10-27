@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>TrainingTrail — Trail des Forts 72 km</title>
-<link rel="stylesheet" href="css/style.css?v=2026102806">
+<link rel="stylesheet" href="css/style.css?v=2026102809">
 </head>
 <body>
 <header id="topbar">
@@ -125,6 +125,15 @@
   </div>
 </div>
 
+<!-- Détails d'une séance (FC, zones, cadence, allure, altitude) -->
+<div id="detail-modal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head"><h3 id="detail-title">Détails de la séance</h3><button class="icon-btn" id="detail-close">✕</button></div>
+    <div id="detail-body"></div>
+    <div class="row-actions" id="detail-actions"></div>
+  </div>
+</div>
+
 <!-- Bannière enregistrement GPS (persistante, toutes vues) -->
 <div id="rec-banner" class="hidden">
   <span class="rec-dot"></span>
@@ -170,11 +179,19 @@
   </div>
 </div>
 
+<!-- Plein écran d'un tracé (avec mode paysage) -->
+<div id="fs-plot" class="hidden">
+  <div class="fs-inner">
+    <div class="fs-head"><b id="fs-title"></b><button class="icon-btn" id="fs-close">✕</button></div>
+    <div id="fs-body"></div>
+  </div>
+</div>
+
 <div id="toast" class="hidden"></div>
 
-<script src="js/data.js?v=2026102806"></script>
-<script src="js/anim.js?v=2026102806"></script>
-<script src="js/gpx.js?v=2026102806"></script>
-<script src="js/app.js?v=2026102806"></script>
+<script src="js/data.js?v=2026102809"></script>
+<script src="js/anim.js?v=2026102809"></script>
+<script src="js/gpx.js?v=2026102809"></script>
+<script src="js/app.js?v=2026102809"></script>
 </body>
 </html>

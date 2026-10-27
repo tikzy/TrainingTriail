@@ -1784,7 +1784,7 @@ function renderSessions() {
         "<td>" + (r.dplus || 0) + "</td>" +
         "<td>" + pace + "</td>" +
         "<td>" + (r.feel ? r.feel + "/10" : "—") + "</td>" +
-        '<td><button class="mini-btn" data-edit="' + r.id + '">Modifier</button></td>' +
+        '<td><button class="mini-btn" data-details="' + r.id + '">Détails</button> <button class="mini-btn" data-edit="' + r.id + '">Modifier</button></td>' +
         "</tr>";
     });
     html += "</tbody></table></div>";
@@ -1856,8 +1856,7 @@ function tracesListHTML() {
   let html = '<h3 id="traces-list-title">Mes traces</h3>';
   if (!traces.length) {
     html += '<div class="muted">Aucune trace pour l\'instant. Démarre l\'enregistrement ci-dessus ou enregistre une séance avec la montre Polar : la trace apparaîtra ici, visualisable sur carte et en courbes.</div>';
-    return html;
-  }
+  } else {
   html += '<div class="trace-list">';
   traces.forEach(r => {
     const s = r.points && r.points.length > 1 ? Geo.stats(r.points) : null;
@@ -1876,6 +1875,7 @@ function tracesListHTML() {
       '<span class="trace-open">Voir la trace</span></button>';
   });
   html += "</div>";
+  }
   return html;
 }
 
@@ -2248,7 +2248,7 @@ function runCardHTML(r) {
     stat(r.dplus + " m", "D+") +
     stat(r.dist && r.dur ? (r.dist / (r.dur / 60)).toFixed(1).replace(".", ",") + " km/h" : "—", "vitesse moy.") +
     stat(pace ? Math.floor(pace) + "'" + String(Math.round((pace % 1) * 60)).padStart(2, "0") + '"/km' : "—", "allure") +
-    stat(phr ? phr.average + " / " + phr.maximum : "—", "FC moy / max (bpm)") +
+    stat(phr && phr.average != null ? phr.average + " / " + phr.maximum : "—", "FC moy / max (bpm)") +
     stat(r.polar && r.polar.calories != null ? r.polar.calories + " kcal" : "—", "calories") +
     stat(r.route ? esc(routeLabel(r.route)) : "—", "type de route") +
     stat(r.feel ? r.feel + "/10" : "—", "sensations") +
@@ -2261,7 +2261,9 @@ function runCardHTML(r) {
     (r.points && r.points.length > 1 ? Geo.profileSVG(r.points) : "") +
     hrChartSVG(r) +
     '<div class="row-actions">' +
-    (r.points && r.points.length > 1 ? '<button class="btn" data-export="' + r.id + '">Exporter le GPX</button>' +
+    '<button class="btn" data-details="' + r.id + '">Détails</button>' +
+    (r.points && r.points.length > 1 ? '<button class="btn" data-goto-trace="' + r.id + '">Voir la trace</button>' +
+      '<button class="btn" data-export="' + r.id + '">Exporter le GPX</button>' +
       '<button class="btn" data-plots="' + r.id + '">Courbes (altitude · vitesse · FC)</button>' : "") +
     "</div></div>";
   return html;
@@ -2272,9 +2274,10 @@ function stat(v, label) { return '<div class="run-stat"><span>' + v + "</span><l
 const HR_ZONE_COLORS = ["#9aa7b8", "#4a90d9", "#3fbf7f", "#e6c229", "#e05252"];
 function hrLoadBadgeHTML(r) {
   const p = r.polar;
-  if (!p || !p.load) return "";
+  if (!p || !p.load || !p.zone) return ""; // tant que les zones ne sont pas importées, pas de badge
   const cls = p.zone <= 2 ? "lo" : p.zone === 3 ? "mid" : "hi";
-  return ' <span class="badge hr-load-' + cls + '">Charge ' + esc(p.load) + " · zone " + p.zone + "/5</span>";
+  const cl = p.cardioLoad != null ? " · charge cardio " + Math.round(p.cardioLoad * 10) / 10 : "";
+  return ' <span class="badge hr-load-' + cls + '">Charge ' + esc(p.load) + " · zone " + p.zone + "/5" + cl + "</span>";
 }
 function hrZonesHTML(r) {
   const z = r.polar && r.polar.zones;
@@ -2290,30 +2293,346 @@ function hrZonesHTML(r) {
   html += "</div>";
   return html;
 }
-/* courbe de FC compacte avec bandes de zones en fond */
+/* courbe de FC de la fiche : bandes de zones + échelle des limites de zones */
 function hrChartSVG(r) {
-  /* polar.hr peut être une série (import détaillé Polar) OU un résumé
-     {average, maximum} (import sans échantillons) : la courbe n'existe
-     que pour une vraie série, sinon elle casse tout l'affichage */
-  const hr = r.polar && r.polar.hr;
+  /* la série vit dans polar.hrS (polar.hr est le résumé {average, maximum}) */
+  const hr = r.polar && (r.polar.hrS || (Array.isArray(r.polar.hr) ? r.polar.hr : null));
   if (!Array.isArray(hr) || hr.length < 5) return "";
   const z = (r.polar.zones || []).length ? r.polar.zones : null;
-  const W = 640, H = 100, pad = 4;
-  const lo = Math.min(...hr), hi = Math.max(...hr) + 5;
-  const y = v => H - pad - (v - lo) / Math.max(1, hi - lo) * (H - 2 * pad);
-  let bands = "";
+  const W = 640, H = 130, pad = 5;
+  /* l'échelle couvre toujours l'échelle complète des zones */
+  let lo = Math.min(...hr), hi = Math.max(...hr);
+  if (z) z.forEach(zz => { lo = Math.min(lo, zz.lo); hi = Math.max(hi, zz.hi); });
+  if (hi - lo < 2) hi = lo + 2;
+  const y = v => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
+  let bands = "", gridSvg = "";
   if (z) {
-    bands = z.map((zz, i) => {
+    z.forEach((zz, i) => {
       const y1 = y(Math.min(zz.hi, hi)), y2 = y(Math.max(zz.lo, lo));
-      return '<rect x="0" y="' + Math.max(y1, pad) + '" width="' + W + '" height="' + Math.max(0, Math.min(y2, H - pad) - Math.max(y1, pad)) +
+      bands += '<rect x="0" y="' + Math.max(y1, pad) + '" width="' + W + '" height="' + Math.max(0, Math.min(y2, H - pad) - Math.max(y1, pad)) +
         '" fill="' + HR_ZONE_COLORS[i] + '" opacity="0.15"/>';
-    }).join("");
+      const gy = y(zz.lo);
+      gridSvg += '<line x1="0" x2="' + W + '" y1="' + gy + '" y2="' + gy + '" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>';
+    });
+    const gy = y(z[z.length - 1].hi);
+    gridSvg += '<line x1="0" x2="' + W + '" y1="' + gy + '" y2="' + gy + '" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>';
   }
   const pts = hr.map((v, i) => (i / (hr.length - 1) * W).toFixed(1) + "," + y(v).toFixed(1)).join(" ");
-  return '<svg class="hr-chart" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" role="img" aria-label="Courbe de fréquence cardiaque">' +
-    bands + '<polyline points="' + pts + '" fill="none" stroke="#ff7d6e" stroke-width="1.5"/>' +
-    "</svg>";
+  /* étiquettes d'échelle : limites de zones (HTML, non déformé par le SVG) */
+  let yLbl = "";
+  if (z) {
+    const seen = {};
+    z.forEach(zz => { if (!seen[zz.lo]) { seen[zz.lo] = true; yLbl += '<span style="top:' + (y(zz.lo) / H * 100).toFixed(1) + '%">' + zz.lo + "</span>"; } });
+    const khi = z[z.length - 1].hi;
+    yLbl += '<span style="top:' + (y(khi) / H * 100).toFixed(1) + '%">' + khi + "</span>";
+  }
+  return '<div class="plot mini">' +
+    '<div class="plot-y">' + yLbl + "</div>" +
+    '<svg class="plot-svg" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" role="img" aria-label="Courbe de fréquence cardiaque">' +
+    bands + gridSvg + '<polyline points="' + pts + '" fill="none" stroke="#ff7d6e" stroke-width="1.5"/>' +
+    "</svg></div>";
 }
+
+/* ---- tracés interactifs configurables du modal « Détails » ----
+   Réticule synchronisé : appuyer sur un tracé plante la ligne verticale et
+   la valeur sur TOUS les tracés en même temps. Chaque tracé se règle :
+   bornes de l'échelle Y, zoom X, taille, superposition d'une seconde série
+   avec sa propre échelle (gauche/droite), plein écran et mode paysage.
+   Axes légendés : « Temps [min] » en X, grandeur et unité en Y. */
+let detailCharts = [];
+const PLOT_W = 640, PLOT_H = 130, PLOT_PAD = 5;
+/* étiquette d'axe temporel : minutes (« 12' ») sous une heure, sinon « 1h05 » */
+function fmtAxisTime(sec) {
+  if (sec == null || isNaN(sec)) return "";
+  if (sec < 3600) return Math.round(sec / 60) + "'";
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h + "h" + String(m).padStart(2, "0");
+}
+/* catalogue des séries disponibles pour la séance ouverte */
+function chartCatalog(r) {
+  const p = r.polar || {};
+  const durSec = (r.dur || 0) * 60;
+  const hrSeries = Array.isArray(p.hrS) ? p.hrS : (Array.isArray(p.hr) ? p.hr : null);
+  const defs = [];
+  if (hrSeries) defs.push({ key: "hr", series: hrSeries, color: "#ff7d6e", unit: "bpm", label: "Fréquence cardiaque [bpm]", short: "FC", decimals: 0, invert: false, durSec, zones: p.zones || null });
+  if (Array.isArray(p.cad)) defs.push({ key: "cad", series: p.cad, color: "#7dc4e8", unit: "pas/min", label: "Cadence [pas/min]", short: "Cadence", decimals: 0, invert: false, durSec });
+  if (Array.isArray(p.pace)) defs.push({ key: "pace", series: p.pace, color: "#8fd3a9", unit: "min/km", label: "Allure [min/km]", short: "Allure", decimals: 1, invert: true, durSec });
+  if (Array.isArray(p.alt)) defs.push({ key: "alt", series: p.alt, color: "#c9a86a", unit: "m", label: "Altitude [m]", short: "Altitude", decimals: 0, invert: false, durSec });
+  return defs;
+}
+/* fenêtre de zoom (indices) d'un tracé */
+function chartWindow(ch) {
+  const n = ch.def.series.length;
+  return [ch.i0 || 0, ch.i1 != null ? ch.i1 : n - 1];
+}
+function chartRangeFor(def, i0, i1, spanZones, ylim) {
+  const sub = def.series.slice(i0, i1 + 1).filter(v => v != null && isFinite(v));
+  let lo = sub.length ? Math.min(...sub) : 0, hi = sub.length ? Math.max(...sub) : 1;
+  if (hi - lo < 2) hi = lo + 2;
+  if (spanZones && def.zones) def.zones.forEach(z => { lo = Math.min(lo, z.lo); hi = Math.max(hi, z.hi); });
+  if (ylim) {
+    if (ylim[0] != null && isFinite(ylim[0])) lo = ylim[0];
+    if (ylim[1] != null && isFinite(ylim[1])) hi = ylim[1];
+    if (hi - lo < 0.5) hi = lo + 1;
+  }
+  return [lo, hi];
+}
+function chartYVal(lo, hi, invert, v) {
+  return invert
+    ? PLOT_PAD + (v - lo) / Math.max(1e-9, hi - lo) * (PLOT_H - 2 * PLOT_PAD)
+    : PLOT_H - PLOT_PAD - (v - lo) / Math.max(1e-9, hi - lo) * (PLOT_H - 2 * PLOT_PAD);
+}
+/* lignes de grille + étiquettes d'une colonne d'échelle */
+function chartScaleCol(lo, hi, invert, gridVals, decimals) {
+  const y = v => chartYVal(lo, hi, invert, v);
+  const seen = {};
+  const vals = gridVals.filter(v => v >= lo && v <= hi && (function (k) { if (seen[k]) return false; seen[k] = true; return true; })(Math.round(v * 10) / 10));
+  let svg = "", lbl = "";
+  vals.forEach(v => {
+    const yy = y(v).toFixed(1);
+    svg += '<line x1="0" x2="' + PLOT_W + '" y1="' + yy + '" y2="' + yy + '" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>';
+    lbl += '<span style="top:' + (y(v) / PLOT_H * 100).toFixed(1) + '%">' + (decimals ? v.toFixed(decimals) : Math.round(v)) + "</span>";
+  });
+  return { svg, lbl };
+}
+/* bloc complet d'un tracé : titre, réglages, courbe(s), axes, réticule */
+function chartHTML(ch) {
+  const def = ch.def;
+  const [i0, i1] = chartWindow(ch);
+  const primLeft = ch.scaleSide !== "right";
+  const [lo, hi] = chartRangeFor(def, i0, i1, !ch.ylim, ch.ylim);
+  /* grille : limites de zones (FC) ou lo/milieu/hi */
+  let gridVals = def.zones && !ch.ylim ? def.zones.map(z => z.lo).concat(def.zones[def.zones.length - 1].hi) : null;
+  if (!gridVals) gridVals = [hi, (lo + hi) / 2, lo];
+  const prim = chartScaleCol(lo, hi, def.invert, gridVals, def.decimals);
+  /* superposition éventuelle : échelle propre, côté opposé */
+  let ov = null;
+  if (ch.overlay) {
+    const [olo, ohi] = chartRangeFor(ch.overlay, i0, i1, false, null);
+    ov = { def: ch.overlay, lo: olo, hi: ohi, col: chartScaleCol(olo, ohi, ch.overlay.invert, [ohi, (olo + ohi) / 2, olo], ch.overlay.decimals) };
+  }
+  let bands = "";
+  if (def.zones && !ch.ylim) {
+    bands = def.zones.map((z, i) => {
+      const y1 = chartYVal(lo, hi, def.invert, Math.min(z.hi, hi)), y2 = chartYVal(lo, hi, def.invert, Math.max(z.lo, lo));
+      const top = Math.min(y1, y2), bot = Math.max(y1, y2);
+      if (bot - top < 0.5) return "";
+      return '<rect x="0" y="' + top.toFixed(1) + '" width="' + PLOT_W + '" height="' + (bot - top).toFixed(1) + '" fill="' + HR_ZONE_COLORS[i] + '" opacity="0.13"/>';
+    }).join("");
+  }
+  /* courbes : la fenêtre [i0, i1] occupe toute la largeur */
+  const line = (series, lo2, hi2, invert) => series.slice(i0, i1 + 1).map((v, k) => {
+    if (v == null || !isFinite(v)) return null;
+    return (k / Math.max(1, i1 - i0) * PLOT_W).toFixed(1) + "," + chartYVal(lo2, hi2, invert, v).toFixed(1);
+  }).filter(Boolean).join(" ");
+  const line1 = line(def.series, lo, hi, def.invert);
+  const line2 = ov ? line(ov.def.series, ov.lo, ov.hi, ov.def.invert) : "";
+  /* graduations X sur la fenêtre + légende des axes */
+  const n = def.series.length;
+  const tAt = f => fmtAxisTime(Math.round((def.durSec || 0) * (i0 + f * (i1 - i0)) / Math.max(1, n - 1)));
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map(f =>
+    '<span style="left:' + (f * 100) + '%"' + (f === 0 ? ' data-end="l"' : f === 1 ? ' data-end="r"' : "") + ">" + tAt(f) + "</span>").join("");
+  const sizeCls = ch.size === "big" ? " plot-big" : ch.size === "small" ? " plot-sm" : "";
+  let html = '<div class="chart-block" data-chart="' + def.key + '">' +
+    '<div class="chart-title-row"><div class="chart-title">' + esc(def.label) + (ov ? ' <span class="muted small">+ ' + esc(ov.def.short) + '</span>' : "") + '</div>' +
+    '<span><button class="mini-btn" data-cfg="' + def.key + '">Réglages</button>' +
+    '<button class="mini-btn" data-fs="' + def.key + '">Plein écran</button>' +
+    '<button class="mini-btn" data-fsland="' + def.key + '">Paysage</button></span></div>' +
+    '<div class="plot' + sizeCls + '" data-pid="' + def.key + '">';
+  const ycol1 = '<div class="plot-y ' + (primLeft ? "yl" : "yr") + '">' + prim.lbl + "</div>";
+  const ycol2 = ov ? '<div class="plot-y ' + (primLeft ? "yr" : "yl") + '" style="color:' + ov.def.color + '">' + ov.col.lbl + "</div>" : "";
+  html += (primLeft ? ycol1 + ycol2 : ycol2 + ycol1);
+  html += '<svg class="plot-svg" viewBox="0 0 ' + PLOT_W + " " + PLOT_H + '" preserveAspectRatio="none">' +
+    bands + prim.svg +
+    '<polyline points="' + line1 + '" fill="none" stroke="' + def.color + '" stroke-width="1.5"/>' +
+    (line2 ? '<polyline points="' + line2 + '" fill="none" stroke="' + ov.def.color + '" stroke-width="1.5"/>' : "") +
+    '<line class="plot-xline" x1="0" x2="0" y1="0" y2="' + PLOT_H + '" stroke="#fff" stroke-width="1" stroke-dasharray="3 3" style="display:none"/>' +
+    '<circle class="plot-dot" r="3.5" fill="#fff" stroke="' + def.color + '" stroke-width="2" style="display:none"/>' +
+    (ov ? '<circle class="plot-dot2" r="3.5" fill="#fff" stroke="' + ov.def.color + '" stroke-width="2" style="display:none"/>' : "") +
+    "</svg>" +
+    '<div class="plot-x">' + xTicks + "</div>" +
+    '<div class="plot-xlabel">Temps [min]</div>' +
+    '<div class="plot-read hidden"></div>' +
+    "</div>";
+  /* panneau de réglages */
+  if (ch.cfgOpen) {
+    const others = chartCatalog(ch.run).filter(d => d.key !== def.key && d.series.length > 4);
+    html += '<div class="chart-cfg">' +
+      '<div class="cfg-row"><label>Y min <input type="number" step="any" data-ymin value="' + (ch.ylim && ch.ylim[0] != null ? ch.ylim[0] : "") + '" placeholder="' + Math.round(lo) + '"></label>' +
+      '<label>Y max <input type="number" step="any" data-ymax value="' + (ch.ylim && ch.ylim[1] != null ? ch.ylim[1] : "") + '" placeholder="' + Math.round(hi) + '"></label>' +
+      '<button class="mini-btn" data-yauto>Auto</button></div>' +
+      '<div class="cfg-row"><label>Zoom de <input type="number" step="1" min="0" data-z0 value="' + (ch.zmin != null ? ch.zmin : "") + '" placeholder="0"> min</label>' +
+      '<label>à <input type="number" step="1" min="0" data-z1 value="' + (ch.zmax != null ? ch.zmax : "") + '" placeholder="' + Math.round((def.durSec || 0) / 60) + '"> min</label>' +
+      '<button class="mini-btn" data-zreset>Tout</button></div>' +
+      '<div class="cfg-row"><label>Superposer <select data-ovl><option value="">—</option>' +
+      others.map(d => '<option value="' + d.key + '"' + (ch.overlay && ch.overlay.key === d.key ? " selected" : "") + ">" + esc(d.short) + "</option>").join("") +
+      '</select></label>' +
+      '<label>Échelle principale <select data-side><option value="left"' + (primLeft ? " selected" : "") + '>à gauche</option><option value="right"' + (!primLeft ? " selected" : "") + '>à droite</option></select></label></div>' +
+      '<div class="cfg-row">Taille <button class="mini-btn' + (ch.size === "small" ? " on" : "") + '" data-size="small">Compacte</button>' +
+      '<button class="mini-btn' + (!ch.size || ch.size === "normal" ? " on" : "") + '" data-size="normal">Normale</button>' +
+      '<button class="mini-btn' + (ch.size === "big" ? " on" : "") + '" data-size="big">Grande</button></div>' +
+      "</div>";
+  }
+  html += "</div>";
+  return html;
+}
+/* repeint un tracé après un réglage */
+function renderChart(ch, container) {
+  const box = (container || document).querySelector('.chart-block[data-chart="' + ch.def.key + '"]');
+  if (!box) return;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = chartHTML(ch);
+  box.replaceWith(tmp.firstChild);
+  bindChartControls(ch, container);
+}
+/* réticule synchronisé : la fraction (0..1) s'applique à tous les tracés */
+function setDetailCrosshair(container, frac) {
+  detailCharts.forEach(ch => {
+    const box = (container || document).querySelector('.plot[data-pid="' + ch.def.key + '"]');
+    if (!box) return;
+    const line = box.querySelector(".plot-xline"), dot = box.querySelector(".plot-dot"), dot2 = box.querySelector(".plot-dot2"), read = box.querySelector(".plot-read");
+    const [i0, i1] = chartWindow(ch);
+    const idx = Math.max(i0, Math.min(i1, Math.round(i0 + frac * (i1 - i0))));
+    const px = ((idx - i0) / Math.max(1, i1 - i0) * PLOT_W).toFixed(1);
+    if (line) { line.setAttribute("x1", px); line.setAttribute("x2", px); line.style.display = ""; }
+    const v = ch.def.series[idx];
+    if (v == null || !isFinite(v)) return;
+    const [lo, hi] = chartRangeFor(ch.def, i0, i1, !ch.ylim, ch.ylim);
+    if (dot) { dot.setAttribute("cx", px); dot.setAttribute("cy", chartYVal(lo, hi, ch.def.invert, v).toFixed(1)); dot.style.display = ""; }
+    let txt = fmtAxisTime(Math.round((ch.def.durSec || 0) * idx / Math.max(1, ch.def.series.length - 1))) + " · " + (ch.def.decimals ? v.toFixed(ch.def.decimals) : Math.round(v)) + " " + ch.def.unit;
+    if (ch.overlay) {
+      const v2 = ch.overlay.series[idx];
+      if (v2 != null && isFinite(v2)) {
+        const [olo, ohi] = chartRangeFor(ch.overlay, i0, i1, false, null);
+        if (dot2) { dot2.setAttribute("cx", px); dot2.setAttribute("cy", chartYVal(olo, ohi, ch.overlay.invert, v2).toFixed(1)); dot2.style.display = ""; }
+        txt += " · " + (ch.overlay.decimals ? v2.toFixed(ch.overlay.decimals) : Math.round(v2)) + " " + ch.overlay.unit;
+      }
+    }
+    if (read) { read.textContent = txt; read.classList.remove("hidden"); }
+  });
+}
+/* events pointeur d'un tracé : appui/glisser → réticule sur tous les tracés */
+function bindChartCrosshair(ch, container) {
+  const box = (container || document).querySelector('.plot[data-pid="' + ch.def.key + '"]');
+  if (!box) return;
+  const svg = box.querySelector("svg");
+  if (!svg || svg.dataset.bound) return;
+  svg.dataset.bound = "1";
+  const fracOf = e => {
+    const r = svg.getBoundingClientRect();
+    if (!r.width && !r.height) return null;
+    /* en mode paysage (pivot 90°), l'axe X du tracé suit l'axe Y de l'écran */
+    const rotated = !!box.closest("[data-rotated]");
+    return rotated
+      ? Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
+      : Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  };
+  const move = e => { const f = fracOf(e); if (f != null) setDetailCrosshair(container, f); };
+  svg.addEventListener("pointerdown", move);
+  svg.addEventListener("pointermove", e => { if (e.buttons || e.pointerType === "touch") move(e); });
+  svg.addEventListener("pointerleave", () => {
+    (container || document).querySelectorAll(".plot-xline, .plot-dot, .plot-dot2").forEach(el => { el.style.display = "none"; });
+    (container || document).querySelectorAll(".plot-read").forEach(el => { el.classList.add("hidden"); });
+  });
+}
+function bindDetailPlots() {
+  detailCharts.forEach(ch => { bindChartCrosshair(ch, $("#detail-body")); bindChartControls(ch, $("#detail-body")); });
+}
+/* boutons et champs de réglage d'un tracé */
+function bindChartControls(ch, container) {
+  const box = (container || document).querySelector('.chart-block[data-chart="' + ch.def.key + '"]');
+  if (!box) return;
+  const rerender = () => { renderChart(ch, container); };
+  const onNum = (sel, fn) => {
+    const el = box.querySelector(sel);
+    if (el) el.addEventListener("change", () => { fn(parseFloat(el.value)); rerender(); });
+  };
+  onNum("[data-ymin]", v => { ch.ylim = [v, ch.ylim ? ch.ylim[1] : null]; });
+  onNum("[data-ymax]", v => { ch.ylim = [ch.ylim ? ch.ylim[0] : null, v]; });
+  const yauto = box.querySelector("[data-yauto]");
+  if (yauto) yauto.addEventListener("click", () => { ch.ylim = null; rerender(); });
+  onNum("[data-z0]", v => { ch.zmin = v; applyZoom(ch); rerender(); });
+  onNum("[data-z1]", v => { ch.zmax = v; applyZoom(ch); rerender(); });
+  const zr = box.querySelector("[data-zreset]");
+  if (zr) zr.addEventListener("click", () => { ch.zmin = null; ch.zmax = null; ch.i0 = 0; ch.i1 = null; rerender(); });
+  const ovl = box.querySelector("[data-ovl]");
+  if (ovl) ovl.addEventListener("change", () => {
+    ch.overlay = chartCatalog(ch.run).find(x => x.key === ovl.value) || null;
+    rerender();
+  });
+  const side = box.querySelector("[data-side]");
+  if (side) side.addEventListener("change", () => { ch.scaleSide = side.value; rerender(); });
+  box.querySelectorAll("[data-size]").forEach(b => b.addEventListener("click", () => { ch.size = b.dataset.size; rerender(); }));
+  const cfg = box.querySelector("[data-cfg]");
+  if (cfg) cfg.addEventListener("click", () => { ch.cfgOpen = !ch.cfgOpen; rerender(); });
+  const fs = box.querySelector("[data-fs]");
+  if (fs) fs.addEventListener("click", () => openChartFS(ch, false));
+  const fsland = box.querySelector("[data-fsland]");
+  if (fsland) fsland.addEventListener("click", () => openChartFS(ch, true));
+}
+function applyZoom(ch) {
+  const n = ch.def.series.length;
+  const durSec = ch.def.durSec || 0;
+  const idxOfMin = m => Math.max(0, Math.min(n - 1, Math.round((m || 0) * 60 / Math.max(1, durSec) * (n - 1))));
+  ch.i0 = ch.zmin != null ? idxOfMin(ch.zmin) : 0;
+  ch.i1 = ch.zmax != null ? idxOfMin(ch.zmax) : (n - 1);
+  if (ch.i1 <= ch.i0) ch.i1 = Math.min(n - 1, ch.i0 + 4);
+}
+/* plein écran (mode paysage : le tracé pivoté à 90° pour occuper la largeur) */
+function openChartFS(ch, landscape) {
+  const fs = $("#fs-plot");
+  if (!fs) return;
+  $("#fs-title").textContent = ch.def.label;
+  const body = $("#fs-body");
+  if (landscape) body.setAttribute("data-rotated", "1");
+  else body.removeAttribute("data-rotated");
+  body.innerHTML = chartHTML(ch);
+  fs.classList.remove("hidden");
+  fs.classList.toggle("landscape", !!landscape);
+  bindChartCrosshair(ch, body);
+  bindChartControls(ch, body);
+}
+/* (l'ancien réticule individuel est remplacé par le réticule synchronisé) */
+
+/* ---- modal « Détails » d'une séance : FC, zones, cadence, allure, altitude ---- */
+function openSessionDetails(id) {
+  const r = state.runs.find(x => x.id === id);
+  if (!r) return;
+  $("#detail-title").textContent = "Détails — " + fmtDateShort(parseDate(r.date)) + " · " + (TYPES[r.code] || { label: r.code }).label;
+  const p = r.polar || {};
+  let html = '<div class="run-stats">' +
+    stat(r.dist ? r.dist.toFixed(1).replace(".", ",") + " km" : "—", "distance") +
+    stat(r.dur ? fmtDur(r.dur * 60) : "—", "durée") +
+    stat(r.dplus + " m", "D+") +
+    stat(r.dist && r.dur ? (r.dist / (r.dur / 60)).toFixed(1).replace(".", ",") + " km/h" : "—", "vitesse moy.") +
+    stat(p.hr && p.hr.average ? p.hr.average + " / " + p.hr.maximum : "—", "FC moy / max (bpm)") +
+    stat(p.calories != null ? p.calories + " kcal" : "—", "calories") +
+    stat(p.cadAvg ? p.cadAvg + " pas/min" : "—", "cadence (fréquence de foulée)") +
+    stat(p.cardioLoad != null ? Math.round(p.cardioLoad * 10) / 10 : "—", "charge cardio") +
+    "</div>";
+  if (p.zones && p.zones.length) {
+    html += "<h4>Répartition par zone de FC</h4>" + hrZonesHTML(r) +
+      '<div class="muted small">Z1-Z2 charge légère · Z3 modérée · Z4 lourde (seuil) · Z5 très lourde (VMA).</div>';
+  }
+  detailCharts = []; /* reconstruits à chaque ouverture du modal */
+  chartCatalog(r).forEach(def => {
+    const ch = { def: def, run: r, ylim: null, zmin: null, zmax: null, i0: 0, i1: null, size: "normal", overlay: null, scaleSide: "left", cfgOpen: false };
+    detailCharts.push(ch);
+    html += chartHTML(ch);
+  });
+  if (!chartCatalog(r).length && !r.points) html += '<div class="muted">Pas de données détaillées pour cette séance (séance manuelle ou sans série Polar).</div>';
+  $("#detail-body").innerHTML = html;
+  bindDetailPlots();
+  $("#detail-actions").innerHTML =
+    (r.points && r.points.length > 1 ? '<button class="btn" id="dt-trace">Voir la trace (onglet Traces)</button>' : "") +
+    '<button class="btn primary" id="dt-close">Fermer</button>';
+  const t = $("#dt-trace");
+  if (t) t.addEventListener("click", () => { $("#detail-modal").classList.add("hidden"); openTraceId = r.id; showView("traces"); });
+  $("#dt-close").addEventListener("click", () => $("#detail-modal").classList.add("hidden"));
+  $("#detail-modal").classList.remove("hidden");
+}
+$("#detail-close").addEventListener("click", () => $("#detail-modal").classList.add("hidden"));
+$("#fs-close").addEventListener("click", () => { $("#fs-plot").classList.add("hidden"); $("#fs-body").innerHTML = ""; });
 
 function bindNewEvents() {
   /* démarrer / suivre l'enregistrement GPS depuis « Nouveau » */
@@ -2382,6 +2701,8 @@ function bindSessionsEvents(sorted) {
     save(); renderSessions(); updateHeader();
     toast("Séance supprimée.", { label: "Annuler", fn: () => { state.runs.splice(idx, 0, removed); save(); renderSessions(); updateHeader(); } });
   }));
+  $$("button[data-details]").forEach(b => b.addEventListener("click", () => openSessionDetails(+b.dataset.details)));
+  $$("button[data-goto-trace]").forEach(b => b.addEventListener("click", () => { openTraceId = +b.dataset.gotoTrace; showView("traces"); }));
   $$("button[data-edit]").forEach(b => b.addEventListener("click", () => openEditRun(+b.dataset.edit)));
   $$("button[data-export]").forEach(b => b.addEventListener("click", () => {
     const r = state.runs.find(x => x.id === +b.dataset.export);
@@ -2426,6 +2747,8 @@ function bindTracesEvents() {
     openTraceId = +b.dataset.trace;
     renderTraces();
   }));
+  /* boutons « Détails » de la liste (séances sans trace) */
+  $$("button[data-details]").forEach(b => b.addEventListener("click", () => openSessionDetails(+b.dataset.details)));
   if (Recorder.active) { startRecTick(); paintRecorderUI(Recorder.live()); }
 }
 function prefillRunFormFromItem(w, d) {
@@ -3601,87 +3924,139 @@ const PolarSync = {
      150-168 / 168+. Les vraies limites viennent de l'API quand elles sont
      disponibles (samples=true&zones=true) ; le temps passé par zone se calcule
      proportionnellement depuis la série de FC. */
-  enrichRunFromDetail(run, ex) {
+  async enrichRunFromDetail(run, ex) {
     if (!run.polar) run.polar = {};
-    /* limites de zones : formats défensifs (snake_case / dash / casse) */
+    /* trace GPS : Polar peut livrer la route APRÈS l'import (has_route bascule
+       à true une fois la trace traitée) — on la récupère alors ici */
+    if (ex && ex.has_route && !(run.points && run.points.length > 1)) {
+      try {
+        const pts = Geo.parseGpx(await this.gpx(run.polarId));
+        if (pts && pts.length > 1) {
+          const s = Geo.stats(pts);
+          run.points = Geo.compact(pts, 800);
+          if (!run.dplus) run.dplus = s.dplus;
+          if (!run.dist) run.dist = Math.round(s.dist * 100) / 100;
+          if (run.points.length > 40 && ServerSync.tracks) {
+            run.trackRef = run.id;
+            fetch("api/track?id=" + run.trackRef, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(run.points)
+            }).catch(() => {});
+            run.points = null;
+          }
+        }
+      } catch (e) { /* GPX pas encore disponible : on garde le résumé Polar */ }
+    }
     const num = (x) => typeof x === "number" ? x : parseFloat(x);
-    const zraw = ex && (ex.heart_rate_zones || ex["heart-rate-zones"] || ex.heartRateZones || ex.zones || ex.heart_rate_zones_response);
-    let limits = null;
-    if (Array.isArray(zraw) && zraw.length) {
-      limits = zraw.map(z => {
-        const lo = num(z.lower_limit != null ? z.lower_limit : z.lowerlimit != null ? z.lowerlimit : z["lower-limit"]),
-              hi = num(z.upper_limit != null ? z.upper_limit : z.upperlimit != null ? z.upperlimit : z["upper-limit"]);
-        return (isFinite(lo) && isFinite(hi)) ? [lo, hi] : null;
-      }).filter(Boolean);
-    }
-    if (!limits || limits.length < 2) {
-      const fcm = (state.profile && state.profile.fcm) || 190;
-      limits = [[94, 112], [112, 131], [131, 150], [150, 168], [168, fcm]];
-    }
-    /* série de FC : formats défenses (liste typée ou objet par type) */
-    let hr = null;
-    const findHr = (s) => {
+    /* durée ISO 8601 -> secondes ("PT2M15S" -> 135) */
+    const durSec = (iso) => {
+      const p = String(iso || "").match(/PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?/);
+      if (!p) return 0;
+      return Math.round((parseFloat(p[1]) || 0) * 3600 + (parseFloat(p[2]) || 0) * 60 + (parseFloat(p[3]) || 0));
+    };
+    /* une série d'échantillons Polar : "76,76,77,…" -> [76,76,77,…] */
+    const seriesOf = (typeId) => {
+      if (!ex || !Array.isArray(ex.samples)) return null;
+      const s = ex.samples.find(x => x && (x.sample_type === typeId || String(x.type).indexOf("heart") >= 0 && typeId === 0));
       if (!s) return null;
-      if (Array.isArray(s)) {
-        for (const item of s) {
-          const t = String(item && (item.type != null ? item.type : item.type_id != null ? item.type_id : item.sample_type != null ? item.sample_type : "")).toLowerCase();
-          const arr = item && (item.data || item.values || item.samples);
-          if (Array.isArray(arr) && (/heart/.test(t) || t === "0" || t === "")) return arr;
-        }
-        return null;
-      }
-      const keys = Object.keys(s);
-      for (const k of keys) {
-        const kk = k.toLowerCase();
-        if (kk.indexOf("heart") >= 0 || kk === "hr" || kk === "0") {
-          const v = s[k];
-          if (Array.isArray(v)) return v;
-          if (v && Array.isArray(v.data)) return v.data;
-        }
-      }
+      const d = s.data;
+      if (Array.isArray(d)) return d.map(Number).filter(isFinite);
+      if (typeof d === "string") return d.split(/[,\s]+/).map(parseFloat).filter(v => isFinite(v));
       return null;
     };
-    hr = findHr(ex && ex.samples) || findHr(ex && ex.samples && ex.samples.samples);
-    if (hr && hr.length > 4) {
-      hr = hr.filter(v => isFinite(v)).map(Number);
-      /* temps par zone, proportionnel à la durée de l'exercice */
-      const durSec = (run.dur || 0) * 60 || hr.length;
+    const compactSeries = (arr, max) => {
+      if (!arr || arr.length < 2) return null;
+      const step = Math.max(1, Math.ceil(arr.length / (max || 240)));
+      const out = [];
+      for (let i = 0; i < arr.length; i += step) out.push(Math.round(arr[i] * 10) / 10);
+      return out;
+    };
+    /* zones de FC : limites + temps par zone (in_zone) données par l'API */
+    const zraw = ex && (ex.heart_rate_zones || ex["heart-rate-zones"] || ex.heartRateZones || ex.zones);
+    let limits = null, zoneSec = null;
+    if (Array.isArray(zraw) && zraw.length >= 2) {
+      const sorted = zraw.slice().sort((a, b) => num(a.index) - num(b.index));
+      limits = sorted.map(z => [num(z.lower_limit != null ? z.lower_limit : z.lowerlimit), num(z.upper_limit != null ? z.upper_limit : z.upperlimit)]);
+      zoneSec = sorted.map(z => durSec(z.in_zone || z["in-zone"] || z.inZone));
+    }
+    if (!limits) {
+      const fcm = (state.profile && state.profile.fcm) || 190;
+      limits = [[94, 112], [112, 131], [131, 150], [150, 168], [168, fcm]];
+      zoneSec = null;
+    }
+    /* séries : FC (0), distance cumulée (1), cadence (2), altitude (3) */
+    const hr = seriesOf(0);
+    const dist = seriesOf(1);
+    const cad = seriesOf(2);
+    const alt = seriesOf(3);
+    /* cadence : Polar donne des pas/min par jambe ; allure depuis la distance */
+    if (cad && cad.length) {
+      const moving = cad.filter(v => v > 5);
+      run.polar.cadAvg = moving.length ? Math.round(2 * moving.reduce((a, b) => a + b, 0) / moving.length) : null;
+      run.polar.cad = compactSeries(cad);
+    }
+    if (dist && dist.length > 4 && run.dur) {
+      /* vitesse instantanée lissée -> allure min/km */
+      const step = Math.max(1, Math.floor(dist.length / 240));
+      const pace = [];
+      for (let i = step; i < dist.length; i += step) {
+        const dd = dist[i] - dist[i - step];
+        const tt = run.dur * 60 * step / dist.length;
+        pace.push(tt > 0 && dd > 0 ? Math.round(1000 / (dd / tt) / 60 * 10) / 10 : null);
+      }
+      const clean = pace.filter(v => v != null && isFinite(v) && v < 20);
+      if (clean.length > 3) run.polar.pace = clean;
+    }
+    if (alt && alt.length > 4) run.polar.alt = compactSeries(alt);
+    /* zones : temps par zone (API prioritaire, sinon calculé depuis la FC) */
+    let zSec = zoneSec;
+    if ((!zSec || !zSec.some(s => s > 0)) && hr && hr.length > 4) {
+      const durS = (run.dur || 0) * 60 || hr.length;
       const counts = new Array(limits.length).fill(0);
       hr.forEach(v => {
         for (let i = 0; i < limits.length; i++) {
-          if (v <= limits[i][1] || i === limits.length - 1) { if (v >= limits[i][0] || i === 0) { counts[i]++; break; } }
+          if ((v <= limits[i][1] || i === limits.length - 1) && (v >= limits[i][0] || i === 0)) { counts[i]++; break; }
         }
       });
       const total = counts.reduce((a, b) => a + b, 0) || 1;
+      zSec = counts.map(c => Math.round(c / total * durS));
+    }
+    if (zSec && zSec.some(s => s > 0)) {
+      const tot = zSec.reduce((a, b) => a + b, 0) || 1;
       run.polar.zones = limits.map((l, i) => ({
         lo: Math.round(l[0]), hi: Math.round(l[1]),
-        min: Math.round(counts[i] / total * durSec / 60), pct: Math.round(100 * counts[i] / total)
+        min: Math.round((zSec[i] || 0) / 60), pct: Math.round(100 * (zSec[i] || 0) / tot)
       }));
-      /* série compacte pour la courbe (max 240 points) */
-      const step = Math.max(1, Math.ceil(hr.length / 240));
-      const series = [];
-      for (let i = 0; i < hr.length; i += step) series.push(Math.round(hr[i]));
-      run.polar.hr = series;
-      run.polar.zonesMax = Math.max(...hr);
-      /* charge : zone dominante */
       let domi = 0;
       run.polar.zones.forEach((z, i) => { if (z.pct > run.polar.zones[domi].pct) domi = i; });
       run.polar.load = domi <= 1 ? "légère" : domi === 2 ? "modérée" : domi === 3 ? "lourde" : "très lourde";
       run.polar.zone = domi + 1;
-    } else if (run.polar.hr) {
-      run.polar.zones = limits.map((l, i) => ({ lo: Math.round(l[0]), hi: Math.round(l[1]), min: null, pct: null }));
+    } else {
+      run.polar.zones = limits.map(l => ({ lo: Math.round(l[0]), hi: Math.round(l[1]), min: null, pct: null }));
     }
+    /* la série de FC vit dans polar.hrS : polar.hr reste le RÉSUMÉ
+       {average, maximum} (utilisé par la fiche, le résumé et le coach) */
+    if (hr && hr.length > 4) run.polar.hrS = compactSeries(hr);
+    /* répare les séances enrichies avant la séparation des deux champs */
+    if (Array.isArray(run.polar.hr)) {
+      if (ex && ex.heart_rate) run.polar.hr = { average: ex.heart_rate.average, maximum: ex.heart_rate.maximum };
+      else delete run.polar.hr;
+    }
+    /* charge cardio : les anciennes séances la stockaient dans polar.load */
+    if (run.polar.cardioLoad == null && ex && ex.training_load_pro && ex.training_load_pro["cardio-load"] != null)
+      run.polar.cardioLoad = ex.training_load_pro["cardio-load"];
     return run;
   },
-  /* enrichit (ou rattrape) les sorties Polar sans zones : quelques-unes par cycle */
+  /* enrichit (ou rattrape) les sorties Polar sans zones complètes : quelques-unes par cycle */
   async enrichMissing(limit) {
     if (!ServerSync.on) return;
-    const todo = state.runs.filter(r => r.polarId && (!r.polar || !r.polar.zones)).slice(0, limit || 3);
+    const todo = state.runs.filter(r => r.polarId && (!r.polar || !r.polar.zones || !r.polar.zones.some(z => z.pct != null) || Array.isArray(r.polar.hr))).slice(0, limit || 3);
     let changed = false;
     for (const run of todo) {
       try {
         const ex = await this.detail(run.polarId);
-        if (ex) { this.enrichRunFromDetail(run, ex); changed = true; }
+        if (ex) { await this.enrichRunFromDetail(run, ex); changed = true; }
       } catch (e) { /* détail indisponible pour cette séance : on garde le résumé */ }
     }
     if (changed) {
@@ -3732,7 +4107,7 @@ const PolarSync = {
         hr: f("heart-rate") || null,
         ri: f("running-index") != null ? f("running-index") : null,
         calories: ex.calories != null ? ex.calories : null,
-        load: (ex["training-load"] != null ? ex["training-load"] : (ex.training_load_pro && ex.training_load_pro["cardio-load"] != null ? ex.training_load_pro["cardio-load"] : null))
+        cardioLoad: (ex["training-load"] != null ? ex["training-load"] : (ex.training_load_pro && ex.training_load_pro["cardio-load"] != null ? ex.training_load_pro["cardio-load"] : null))
       },
       planned: pe ? pe.it.t : null,
       planKey: pe ? (pe.isCustom ? customKey(pe.custom.id) : itemKey(pe.w, pe.d, pe.i)) : null

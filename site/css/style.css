@@ -660,3 +660,60 @@ details.shutter > .tip { margin: 8px 0 10px; }
 .leaflet-control-attribution { background: rgba(14,20,32,0.75) !important; color: #cfd6e0 !important; font-size: 10px !important; }
 .leaflet-control-attribution a { color: #9fb8d4 !important; }
 .leaflet-bar a { background: #182234 !important; color: #dbe6f2 !important; border-color: #2a3648 !important; }
+
+/* ---- modal détails de séance : blocs de courbes ---- */
+.chart-block { margin: 12px 0; }
+.chart-title { font-size: 13px; color: #bfe3ff; margin-bottom: 4px; }
+#detail-body .run-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 10px; }
+#detail-body h4 { color: #bfe3ff; font-size: 14px; margin: 14px 0 6px; }
+
+/* ---- tracés interactifs du modal Détails : échelles + réticule ---- */
+.plot { position: relative; margin: 4px 0 2px 30px; touch-action: pan-y; }
+.plot-y { position: absolute; left: -30px; top: 0; bottom: 0; width: 26px; }
+.plot-y span {
+  position: absolute; transform: translateY(-50%); right: 4px;
+  font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; line-height: 1;
+}
+.plot-svg { width: 100%; height: 130px; display: block; cursor: crosshair; border-radius: 8px;
+  background: rgba(255,255,255,0.03); }
+.plot-x { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.plot-read {
+  display: inline-block; margin-top: 4px; font-size: 12.5px; font-weight: 600; color: #bfe3ff;
+  background: rgba(61,110,165,0.25); border: 1px solid var(--line); border-radius: 8px; padding: 2px 10px;
+  font-variant-numeric: tabular-nums;
+}
+.plot-read.hidden { display: none; }
+
+/* ---- graduations X des tracés + variante compacte de la fiche ---- */
+.plot-x { position: relative; height: 16px; margin-top: 2px; }
+.plot-x span {
+  position: absolute; transform: translateX(-50%); font-size: 10px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1;
+}
+.plot-x span[data-end="l"] { transform: none; }
+.plot-x span[data-end="r"] { transform: translateX(-100%); }
+.plot.mini .plot-svg { height: 92px; }
+
+/* ---- tracés configurables : titre + réglages + échelles gauche/droite ---- */
+.chart-title-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chart-title-row .chart-title { font-size: 13px; color: #bfe3ff; }
+.chart-cfg { background: var(--card2, rgba(255,255,255,0.04)); border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-top: 8px; display: grid; gap: 8px; }
+.cfg-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; font-size: 12.5px; }
+.cfg-row label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.cfg-row input, .cfg-row select { width: 72px; background: var(--card); color: var(--txt); border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; font-size: 12.5px; }
+.cfg-row select { width: auto; }
+.mini-btn.on { background: var(--acc); color: #fff; border-color: var(--acc); }
+.plot { margin: 4px 30px 2px 30px; }
+.plot-y.yl { left: -30px; right: auto; text-align: right; }
+.plot-y.yr { left: auto; right: -30px; text-align: left; }
+.plot-sm .plot-svg { height: 92px; }
+.plot-big .plot-svg { height: 240px; }
+.plot-xlabel { text-align: center; font-size: 10.5px; color: var(--muted); margin-top: 1px; }
+/* plein écran + paysage */
+#fs-plot { position: fixed; inset: 0; background: rgba(5,8,14,0.97); z-index: 60; display: flex; align-items: center; justify-content: center; padding: 12px; }
+#fs-plot.hidden { display: none; }
+.fs-inner { width: 100%; max-width: 900px; }
+.fs-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+#fs-plot .plot-svg { height: 55vh; }
+#fs-plot.landscape .fs-inner { transform: rotate(90deg); width: 100vw; max-width: none; }
+#fs-plot.landscape .plot-svg { height: 62vh; }
