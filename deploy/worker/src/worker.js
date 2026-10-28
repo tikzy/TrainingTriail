@@ -1,24 +1,43 @@
 /* TrainingTrail — Worker Cloudflare + D1 (prototype de stockage central).
    Réimplémente l'API du serveur Node (server/server.js) sans machine dédiée :
-     GET  /api/ping   -> { ok: true, app, version }
-     GET  /api/state  -> { ok, updatedAt, state }
+     GET  /api/ping   -> { ok, app, version, tracks, auth }
+     GET  /api/salt   -> { ok, registered, salt } (public : le sel n'est pas secret)
+     PUT  /api/auth   -> enregistre { salt, keyHash } du coffre (SHA-256 de la clé)
+     GET  /api/state  -> état (blob chiffré {enc,salt,iv,ct} si coffre actif)
      PUT  /api/state  -> enregistre l'état (JSON) dans D1 (table `state`)
+     GET/PUT/DELETE /api/track?id=... -> traces GPS (opaques, chiffrées côté client)
    Tout le reste est servi depuis les fichiers statiques de ../../site
    (liaison ASSETS, voir wrangler.toml). L'app ne change pas : ServerSync
-   appelle "api/ping" et "api/state" en relatif, donc same-origin. */
+   appelle "api/ping" et "api/state" en relatif, donc same-origin.
+
+   Sécurité :
+   - chiffrement de bout en bout : le worker ne voit passer que du chiffré ;
+     dès qu'un coffre est enregistré, l'accès aux données exige l'en-tête
+     X-TT-Key (comparaison en temps constant du SHA-256 — jamais le mot de
+     passe ni la clé ne sont stockés)
+   - limitation de débit (liaison native ratelimit si déployée avec wrangler
+     >= 4.36, sinon repli en mémoire par isolat) + blocage après échecs de clé
+   - en-têtes de sécurité + CSP, anti-rollback sur l'état (409) */
 
 const MAX_BODY = 2 * 1024 * 1024; // limite prototype : au-delà, passer les traces GPX sur R2
 const MAX_TRACK = 5 * 1024 * 1024; // trace GPS maximale en R2
+const KEY_RE = /^[A-Za-z0-9+/]{43}=$/; // b64(32 octets)
 
 /* Polar AccessLink v3 : endpoints OAuth et API (https://www.polar.com/accesslink-api/) */
 const POLAR_AUTH = "https://flow.polar.com/oauth2/authorization";
 const POLAR_TOKEN = "https://polarremote.com/v2/oauth2/token";
 const POLAR_API = "https://www.polaraccesslink.com/v3";
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type"
+/* en-têtes de sécurité (le site est same-origin : pas de CORS ouvert) */
+const SEC_HEADERS = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "Permissions-Policy": "geolocation=(self), camera=(), microphone=(), payment=(), usb=()",
+  "Content-Security-Policy":
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: blob:; connect-src 'self' https://api.mistral.ai; " +
+    "font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
 };
 
 function json(data, status) {
@@ -27,23 +46,133 @@ function json(data, status) {
     headers: Object.assign({
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store"
-    }, CORS)
+    }, SEC_HEADERS)
   });
+}
+const jerr = (msg, status, extra) => new Response(JSON.stringify({ ok: false, error: msg }), {
+  status: status || 400,
+  headers: Object.assign({ "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }, SEC_HEADERS, extra || {})
+});
+
+/* ---- limitation de débit ---- */
+const RL = { win: 60000, maxApi: 120, maxPut: 30, failMax: 8, failBlock: 15 * 60000 };
+const MEM = { hits: new Map(), fails: new Map() }; // repli par isolat (best effort)
+function ipKey(request) {
+  return request.headers.get("cf-connecting-ip") ||
+    (request.headers.get("x-forwarded-for") || "").split(",")[0].trim() || "unknown";
+}
+/* false = à bloquer (429). Liaison native « ratelimit » (wrangler >= 4.36) si
+   présente ; sinon fenêtre glissante en mémoire de l'isolat. */
+async function rateLimit(request, env) {
+  if (env.RATE_LIMITER) {
+    try {
+      const r = await env.RATE_LIMITER.limit({ key: ipKey(request) });
+      if (r && r.success === false) return false;
+      return true;
+    } catch (e) { /* repli mémoire ci-dessous */ }
+  }
+  const k = ipKey(request), now = Date.now();
+  let h = MEM.hits.get(k);
+  if (!h) { h = { api: [], put: [] }; MEM.hits.set(k, h); }
+  const push = arr => { arr.push(now); const cut = now - RL.win; while (arr.length && arr[0] <= cut) arr.shift(); };
+  push(h.api);
+  if (request.method === "PUT" || request.method === "DELETE") push(h.put);
+  return h.put.length <= RL.maxPut && h.api.length <= RL.maxApi;
+}
+function noteAuthFailure(request) {
+  const k = ipKey(request), now = Date.now();
+  const f = MEM.fails.get(k) || { n: 0, until: 0 };
+  if (f.until > now) return;
+  f.n += 1;
+  if (f.n >= RL.failMax) { f.until = now + RL.failBlock; f.n = 0; }
+  MEM.fails.set(k, f);
+}
+function authLocked(request) {
+  const f = MEM.fails.get(ipKey(request));
+  return !!(f && f.until > Date.now());
+}
+
+/* ---- coffre : D1 ne stocke que { salt, key_hash } (SHA-256 de l'apiKey) ---- */
+async function loadAuth(env) {
+  try {
+    const row = await env.DB.prepare("SELECT salt, key_hash FROM auth WHERE id = 1").first();
+    return row || null;
+  } catch (e) { return null; }
+}
+async function sha256b64(s) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
+  let bin = "";
+  for (let i = 0; i < h.length; i++) bin += String.fromCharCode(h[i]);
+  return btoa(bin);
+}
+function fixedEq(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let x = 0;
+  for (let i = 0; i < a.length; i++) x |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return x === 0;
+}
+/* { ok, registered } : pas de coffre enregistré (héritage) = tout passe */
+async function checkKey(request, env) {
+  const auth = await loadAuth(env);
+  if (!auth || !auth.key_hash) return { ok: true, registered: false };
+  const key = request.headers.get("x-tt-key") || "";
+  if (!KEY_RE.test(key)) return { ok: false, registered: true };
+  return { ok: fixedEq(await sha256b64(key), auth.key_hash), registered: true };
 }
 
 export default {
   async fetch(request, env) {
     let url;
     try { url = new URL(request.url); }
-    catch (e) { return json({ ok: false, error: "URL invalide" }, 400); }
+    catch (e) { return jerr("URL invalide", 400); }
 
-    if (url.pathname === "/api/ping")
-      return json({ ok: true, app: "trainingtrail-worker", version: 1, tracks: !!env.TRACKS });
+    if (url.pathname === "/api/ping") {
+      const auth = await loadAuth(env);
+      return json({ ok: true, app: "trainingtrail-worker", version: 1, tracks: !!env.TRACKS, auth: !!(auth && auth.key_hash) });
+    }
+
+    /* limite de débit sur toutes les routes API, avant toute autre action */
+    if (url.pathname.startsWith("/api/")) {
+      if (authLocked(request) || !(await rateLimit(request, env)))
+        return jerr("trop de requêtes", 429, { "Retry-After": "60" });
+    }
+
+    /* sel du coffre : public (il voyage avec les blobs), nécessaire aux autres
+       appareils pour dériver les clés avant de prouver le mot de passe */
+    if (url.pathname === "/api/salt") {
+      const auth = await loadAuth(env);
+      return json({ ok: true, registered: !!(auth && auth.key_hash), salt: (auth && auth.salt) || null });
+    }
+
+    /* enregistrement / changement du coffre : { salt, keyHash } */
+    if (url.pathname === "/api/auth") {
+      if (request.method !== "PUT") return jerr("méthode non autorisée", 405);
+      const cur = await loadAuth(env);
+      if (cur && cur.key_hash) {
+        const c = await checkKey(request, env); // changer exige la clé actuelle
+        if (!c.ok) { noteAuthFailure(request); return jerr("clé d'accès invalide", 401); }
+      }
+      let obj = null;
+      try { obj = JSON.parse(await request.text()); } catch (e) { return jerr("JSON invalide", 400); }
+      const salt = String(obj && obj.salt || ""), keyHash = String(obj && obj.keyHash || "");
+      if (!/^[A-Za-z0-9+/]{16,64}={0,2}$/.test(salt) || !KEY_RE.test(keyHash))
+        return jerr("salt/keyHash invalides", 400);
+      try {
+        await env.DB
+          .prepare("INSERT INTO auth (id, salt, key_hash, updated_at) VALUES (1, ?, ?, ?) " +
+                   "ON CONFLICT(id) DO UPDATE SET salt = excluded.salt, key_hash = excluded.key_hash, updated_at = excluded.updated_at")
+          .bind(salt, keyHash, Date.now()).run();
+        return json({ ok: true });
+      } catch (e) { return jerr("D1 indisponible : " + String(e && e.message || e), 500); }
+    }
 
     /* ================= Polar AccessLink (montre Vantage M3) =================
        Le worker porte l'OAuth : client id/secret (secrets wrangler) et le jeton
        d'accès de l'utilisateur (table D1 `polar`) ne sortent jamais du serveur.
-       L'app, same-origin, appelle /api/polar/* en relatif.
+       L'app, same-origin, appelle /api/polar/* en relatif. Les endpoints de
+       DONNÉES exigent la clé du coffre dès qu'il est enregistré ; les redirects
+       OAuth (connect/callback) et status/disconnect restent ouverts (aucune
+       donnée personnelle, navigations du navigateur sans en-têtes possibles).
          GET /api/polar/status         -> { ok, configured, connected, lastSync, callback }
          GET /api/polar/connect         -> 302 vers flow.polar.com (autorisation)
          GET /api/polar/callback        -> échange du code + inscription, 302 vers /#polar=ok
@@ -105,7 +234,7 @@ export default {
         if (saw401) throw { status: 401, error: "jeton Polar refusé — reconnecte la montre dans Réglages" };
         throw { status: 502, error: "Polar injoignable" };
       }
-      const redirect = (to) => new Response(null, { status: 302, headers: { Location: to } });
+      const redirect = (to) => new Response(null, { status: 302, headers: Object.assign({ Location: to }, SEC_HEADERS) });
 
       const sub = url.pathname.slice("/api/polar/".length);
       if (!configured) return json({ ok: false, error: "Polar non configuré sur le serveur (POLAR_CLIENT_ID / POLAR_CLIENT_SECRET)" }, 503);
@@ -194,6 +323,10 @@ export default {
         return redirect("/#polar=off");
       }
 
+      /* ---- endpoints de données : clé du coffre requise dès qu'enregistrée ---- */
+      const c = await checkKey(request, env);
+      if (!c.ok) { noteAuthFailure(request); return jerr("clé d'accès requise", 401); }
+
       if (sub === "exercises") {
         try {
           const p = await polarLoad();
@@ -253,7 +386,7 @@ export default {
          AccessLink : GET /v3/exercises/{id}?samples=true&zones=true */
       if (sub === "exercise") {
         const id = url.searchParams.get("id");
-        if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return json({ ok: false, error: "id invalide" }, 400);
+        if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return jerr("id invalide", 400);
         try {
           const res = await polarApi("/exercises/" + id + "?samples=true&zones=true");
           const data = await res.json();
@@ -263,11 +396,11 @@ export default {
 
       if (sub === "gpx") {
         const id = url.searchParams.get("id");
-        if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return json({ ok: false, error: "id invalide" }, 400);
+        if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return jerr("id invalide", 400);
         try {
           const res = await polarApi("/exercises/" + id + "/gpx", "application/gpx+xml");
           return new Response(await res.text(), {
-            headers: Object.assign({ "Content-Type": "application/gpx+xml; charset=utf-8", "Cache-Control": "no-store" }, CORS)
+            headers: Object.assign({ "Content-Type": "application/gpx+xml; charset=utf-8", "Cache-Control": "no-store" }, SEC_HEADERS)
           });
         } catch (e) { return polarApiError(e); }
       }
@@ -283,10 +416,10 @@ export default {
       if (sub === "sleep") {
         const from = url.searchParams.get("from"), to = url.searchParams.get("to");
         if (!/^\d{4}-\d{2}-\d{2}$/.test(from || "") || !/^\d{4}-\d{2}-\d{2}$/.test(to || ""))
-          return json({ ok: false, error: "dates invalides (YYYY-MM-DD)" }, 400);
+          return jerr("dates invalides (YYYY-MM-DD)", 400);
         try {
           if (Date.parse(to) - Date.parse(from) > 31 * 864e5)
-            return json({ ok: false, error: "intervalle trop large (max 31 jours)" }, 400);
+            return jerr("intervalle trop large (max 31 jours)", 400);
           const res = await polarApi("/users/sleep?from=" + from + "&to=" + to);
           const data = await res.json();
           return json({ ok: true, nights: (data && data.nights) || [] });
@@ -311,43 +444,45 @@ export default {
         } catch (e) { return polarApiError(e); }
       }
 
-      return json({ ok: false, error: "endpoint Polar inconnu" }, 404);
+      return jerr("endpoint Polar inconnu", 404);
     }
 
     /* traces GPS en R2 (si la liaison TRACKS est configurée) : hors de l'état
-       D1, plafonné par ailleurs à 2 Mo. id = identifiant de la sortie. */
+       D1, plafonné par ailleurs à 2 Mo. id = identifiant de la sortie. Le contenu
+       est opaque pour le serveur (chiffré côté client quand le coffre est actif). */
     if (url.pathname === "/api/track") {
       const id = url.searchParams.get("id");
-      if (!id || !/^\d{1,12}$/.test(id)) return json({ ok: false, error: "id invalide" }, 400);
-      if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
-      if (!env.TRACKS) return json({ ok: false, error: "stockage des traces non activé" }, 503);
+      if (!id || !/^\d{1,12}$/.test(id)) return jerr("id invalide", 400);
+      if (!env.TRACKS) return jerr("stockage des traces non activé", 503);
+      const c = await checkKey(request, env);
+      if (!c.ok) { noteAuthFailure(request); return jerr("clé d'accès requise", 401); }
       const key = "track-" + id;
       if (request.method === "PUT") {
         try {
           const body = await request.text();
-          if (body.length > MAX_TRACK) return json({ ok: false, error: "trace trop volumineuse" }, 400);
+          if (body.length > MAX_TRACK) return jerr("trace trop volumineuse", 400);
           JSON.parse(body); // refuse tout ce qui n'est pas du JSON valide
           await env.TRACKS.put(key, body);
           return json({ ok: true });
-        } catch (e) { return json({ ok: false, error: String(e && e.message || e) }, 400); }
+        } catch (e) { return jerr(String(e && e.message || e), 400); }
       }
       if (request.method === "GET") {
         const obj = await env.TRACKS.get(key);
-        if (!obj) return json({ ok: false, error: "trace inconnue" }, 404);
+        if (!obj) return jerr("trace inconnue", 404);
         return new Response(await obj.text(), {
-          headers: Object.assign({ "Content-Type": "application/json", "Cache-Control": "no-store" }, CORS)
+          headers: Object.assign({ "Content-Type": "application/json", "Cache-Control": "no-store" }, SEC_HEADERS)
         });
       }
       if (request.method === "DELETE") {
         await env.TRACKS.delete(key);
         return json({ ok: true });
       }
-      return json({ ok: false, error: "méthode non autorisée" }, 405);
+      return jerr("méthode non autorisée", 405);
     }
 
     if (url.pathname === "/api/state") {
-      if (request.method === "OPTIONS")
-        return new Response(null, { status: 204, headers: CORS });
+      const c = await checkKey(request, env);
+      if (!c.ok) { noteAuthFailure(request); return jerr("clé d'accès requise", 401); }
 
       if (request.method === "GET") {
         const row = await env.DB
@@ -364,7 +499,23 @@ export default {
           const obj = JSON.parse(body);
           if (typeof obj !== "object" || obj === null || Array.isArray(obj))
             throw new Error("état invalide");
-          const updatedAt = obj.updatedAt || 0;
+          const updatedAt = typeof obj.updatedAt === "number" ? obj.updatedAt : 0;
+          /* anti-rollback : on refuse une version plus ancienne que la copie serveur */
+          const cur = await env.DB
+            .prepare("SELECT updated_at FROM state WHERE id = 1").first();
+          if (cur && typeof cur.updated_at === "number" && updatedAt < cur.updated_at)
+            return jerr("état plus ancien que la copie du serveur", 409);
+          /* premier envoi chiffré avec clé valide : le worker adopte le coffre
+             (salt du blob + SHA-256 de la clé reçue) pour bloquer les accès sans clé */
+          const auth = await loadAuth(env);
+          if (!auth || !auth.key_hash) {
+            const key = request.headers.get("x-tt-key") || "";
+            if (obj.enc === 1 && KEY_RE.test(key))
+              await env.DB
+                .prepare("INSERT INTO auth (id, salt, key_hash, updated_at) VALUES (1, ?, ?, ?) " +
+                         "ON CONFLICT(id) DO UPDATE SET salt = excluded.salt, key_hash = excluded.key_hash, updated_at = excluded.updated_at")
+                .bind(String(obj.salt || ""), await sha256b64(key), Date.now()).run();
+          }
           await env.DB
             .prepare("INSERT INTO state (id, json, updated_at) VALUES (1, ?, ?) " +
                      "ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at")
@@ -372,13 +523,17 @@ export default {
             .run();
           return json({ ok: true, updatedAt: updatedAt });
         } catch (e) {
-          return json({ ok: false, error: String(e && e.message || e) }, 400);
+          return jerr(String(e && e.message || e), 400);
         }
       }
 
-      return json({ ok: false, error: "méthode non autorisée" }, 405);
+      return jerr("méthode non autorisée", 405);
     }
 
-    return env.ASSETS.fetch(request);
+    /* fichiers statiques : mêmes en-têtes de sécurité que l'API */
+    const res = await env.ASSETS.fetch(request);
+    const h = new Headers(res.headers);
+    for (const k in SEC_HEADERS) h.set(k, SEC_HEADERS[k]);
+    return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
   }
 };

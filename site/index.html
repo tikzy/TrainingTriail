@@ -167,13 +167,13 @@
 <!-- Verrouillage de l'application (Réglages) -->
 <div id="lock-modal" class="modal">
   <div class="modal-box lock-box">
-    <div class="modal-head"><h3>TrainingTrail verrouillé</h3></div>
-    <div class="muted small">Entre le mot de passe de l'application pour continuer.</div>
+    <div class="modal-head"><h3 id="lock-title">TrainingTrail verrouillé</h3></div>
+    <div class="muted small" id="lock-desc">Entre le mot de passe de l'application pour continuer.</div>
     <div class="form-grid">
       <label class="full">Mot de passe <input type="password" id="lock-pass" autocomplete="current-password"></label>
     </div>
     <div class="row-actions">
-      <label class="lock-remember"><input type="checkbox" id="lock-remember" checked> Se souvenir sur cet appareil</label>
+      <label class="lock-remember" id="lock-remember-wrap"><input type="checkbox" id="lock-remember" checked> Se souvenir sur cet appareil</label>
       <button class="btn primary" id="lock-go">Déverrouiller</button>
     </div>
   </div>
@@ -192,6 +192,7 @@
 <script src="js/data.js?v=2026102809"></script>
 <script src="js/anim.js?v=2026102809"></script>
 <script src="js/gpx.js?v=2026102809"></script>
-<script src="js/app.js?v=2026102809"></script>
+<script src="js/crypto.js?v=2026102811"></script>
+<script src="js/app.js?v=2026102811"></script>
 </body>
 </html>

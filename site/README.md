@@ -25,6 +25,24 @@ injoignable, le navigateur continue de travailler sur sa copie locale
 perte : union des cochages, sorties fusionnées par identifiant, l'état le plus
 récent gagne).
 
+### Chiffrement de bout en bout (Réglages → Chiffrement des données)
+
+Après activation (mot de passe du coffre, le même sur tous les appareils) :
+
+- les données sont chiffrées **dans le navigateur** (AES-GCM 256, clé dérivée
+  du mot de passe par PBKDF2-SHA256, 600 000 itérations) avant tout envoi et
+  avant toute écriture dans localStorage : le serveur ne stocke qu'un blob
+  illisible `{enc, salt, iv, ct}` ;
+- sans le mot de passe, le serveur **refuse l'accès** (en-tête `X-TT-Key`,
+  SHA-256 stocké — jamais le mot de passe ni la clé) et le navigateur ne garde
+  aucune copie en clair ;
+- le mot de passe est demandé à chaque chargement (les clés n'existent qu'en
+  mémoire) et il n'est récupérable par personne : perdu = données illisibles.
+  Les traces GPS (R2 / fichiers `tracks/`) sont chiffrées de la même façon ;
+- le serveur limite en outre les requêtes par IP (fenêtre glissante, blocage
+  après échecs répétés de clé), refuse les états plus anciens que sa copie
+  (anti-rollback, 409) et envoie les en-têtes de sécurité (CSP, nosniff…).
+
 Le serveur peut tourner partout où Node tourne : PC de la maison, mini-serveur,
 ou hébergeur gratuit (Render, Railway, Fly.io…). Sur GitHub Pages seul, le site
 retombe automatiquement en mode statique (localStorage).

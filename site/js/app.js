@@ -30,35 +30,72 @@ let state = {
 };
 
 let storageWarned = false;
+/* file d'écritures chiffrées : chaque save() re-scelle l'état (asynchrone) ;
+   la file évite les scels concurrents et garde le dernier gagnant */
+let encQueue = Promise.resolve();
 function save() {
   state.updatedAt = Date.now();
-  const write = () => localStorage.setItem(LS_KEY, JSON.stringify(state));
-  try { write(); }
-  catch (e) {
-    // quota dépassé : compacter d'abord les traces GPS, puis les supprimer en dernier recours
-    try {
-      state.runs.forEach(r => { if (r.points && r.points.length) r.points = Geo.compact(r.points, 1200); });
-      write();
-    } catch (e2) {
-      const withPts = state.runs.slice().sort((a, b) => a.id - b.id).filter(r => r.points);
-      let ok = false;
-      for (const r of withPts) { r.points = null; try { write(); ok = true; break; } catch (e3) {} }
-      if (!ok && !storageWarned) {
-        storageWarned = true;
-        toast("Sauvegarde impossible : stockage du navigateur plein. Exporte tes données (Réglages) puis supprime d'anciennes sorties.");
+  if (Vault.ready) persistEncrypted();
+  else {
+    const write = () => localStorage.setItem(LS_KEY, JSON.stringify(state));
+    try { write(); }
+    catch (e) {
+      // quota dépassé : compacter d'abord les traces GPS, puis les supprimer en dernier recours
+      try {
+        state.runs.forEach(r => { if (r.points && r.points.length) r.points = Geo.compact(r.points, 1200); });
+        write();
+      } catch (e2) {
+        const withPts = state.runs.slice().sort((a, b) => a.id - b.id).filter(r => r.points);
+        let ok = false;
+        for (const r of withPts) { r.points = null; try { write(); ok = true; break; } catch (e3) {} }
+        if (!ok && !storageWarned) {
+          storageWarned = true;
+          toast("Sauvegarde impossible : stockage du navigateur plein. Exporte tes données (Réglages) puis supprime d'anciennes sorties.");
+        }
+        if (!ok) console.error("Échec de la sauvegarde localStorage", e);
       }
-      if (!ok) console.error("Échec de la sauvegarde localStorage", e);
     }
   }
   ServerSync.push();
   updateSaveStamp();
+}
+/* chiffre l'état et range le blob dans localStorage ; la copie en clair
+   (héritage) est effacée. Même repli anti-quota que le mode clair. */
+function persistEncrypted() {
+  const attempt = () => Vault.seal(state, Vault.AAD_STATE).then(blob => {
+    localStorage.setItem(VAULT_LS_KEY, JSON.stringify(blob));
+    localStorage.removeItem(LS_KEY);
+  });
+  encQueue = encQueue.then(async () => {
+    try { await attempt(); return; } catch (e) { }
+    try {
+      state.runs.forEach(r => { if (r.points && r.points.length) r.points = Geo.compact(r.points, 1200); });
+      await attempt(); return;
+    } catch (e) { }
+    const withPts = state.runs.slice().sort((a, b) => a.id - b.id).filter(r => r.points);
+    for (const r of withPts) {
+      r.points = null;
+      try { await attempt(); return; } catch (e) { }
+    }
+    if (!storageWarned) {
+      storageWarned = true;
+      toast("Sauvegarde impossible : stockage du navigateur plein. Exporte tes données (Réglages) puis supprime d'anciennes sorties.");
+    }
+  }).catch(e => console.error("Échec du chiffrement local", e));
 }
 function updateSaveStamp() {
   const el = $("#save-stamp");
   if (el) el.textContent = "Enregistré à " + new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 function load() {
-  try { const raw = localStorage.getItem(LS_KEY); if (raw) Object.assign(state, JSON.parse(raw)); }
+  Vault.pendingBlob = Vault.localBlob();
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    /* s'il existe un blob chiffré, il est plus récent que l'éventuelle copie
+       en clair héritée : on n'hydrate pas cette dernière (elle sera effacée
+       au premier save()) */
+    if (raw && !Vault.pendingBlob) Object.assign(state, JSON.parse(raw));
+  }
   catch (e) { console.warn("Lecture localStorage impossible", e); }
   normalizeState();
 }
@@ -1927,8 +1964,8 @@ async function renderTraceViewer(id) {
     $("#view-traces").innerHTML = '<h2>Traces GPS</h2><div class="muted">Chargement de la trace du ' +
       esc(fmtDateShort(parseDate(run.date))) + "…</div>";
     try {
-      const res = await fetch("api/track?id=" + run.trackRef, { cache: "no-store" });
-      if (res.ok) { run.points = JSON.parse(await res.text()); pts = run.points; }
+      const pts2 = await ServerSync.getTrack(run.trackRef);
+      if (pts2 && pts2.length > 1) { run.points = pts2; pts = run.points; }
     } catch (e) { /* reste en mode dégradé : courbes seules */ }
   }
   if (!pts) {
@@ -2697,7 +2734,7 @@ function bindSessionsEvents(sorted) {
     if (idx < 0) return;
     const removed = state.runs[idx];
     state.runs.splice(idx, 1);
-    if (removed.trackRef && ServerSync.on) fetch("api/track?id=" + removed.trackRef, { method: "DELETE" }).catch(() => {});
+    if (removed.trackRef && ServerSync.on) ServerSync.delTrack(removed.trackRef);
     save(); renderSessions(); updateHeader();
     toast("Séance supprimée.", { label: "Annuler", fn: () => { state.runs.splice(idx, 0, removed); save(); renderSessions(); updateHeader(); } });
   }));
@@ -3021,11 +3058,7 @@ function saveRunFromForm() {
   /* trace GPS volumineuse : rangée hors état (R2) quand le serveur le permet */
   if (run.points && run.points.length > 40 && ServerSync.tracks) {
     run.trackRef = run.id;
-    fetch("api/track?id=" + run.trackRef, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(run.points)
-    }).catch(() => {});
+    ServerSync.putTrack(run.trackRef, run.points);
     save(); // renvoie l'état sans les points (déportés)
   }
   const realNoteMsg = pe && run.dur
@@ -3552,12 +3585,16 @@ async function sendCoach() {
 }
 
 function storageNoteHTML() {
+  const enc = Vault.ready
+    ? " Les données sont <b>chiffrées</b> (AES-GCM) avant tout envoi : le serveur n'en stocke qu'une copie illisible sans le mot de passe."
+    : "";
   if (ServerSync.on)
     return "<b>Mode dynamique</b> : les données sont enregistrées sur le <b>serveur centralisé</b> " +
-      "(fichier <code>server/data/state.json</code>) et partagées entre tous les appareils connectés. " +
-      "Le navigateur garde une copie de secours (localStorage) si le serveur est injoignable.";
+      "et partagées entre tous les appareils connectés." + enc +
+      " Le navigateur garde une copie de secours si le serveur est injoignable.";
   return "<b>Mode local</b> : aucune instance de serveur détectée — les données restent dans " +
-    "<b>ce navigateur uniquement</b>. Lance <code>node server/server.js</code> pour un stockage " +
+    "<b>ce navigateur uniquement</b>" + (Vault.ready ? ", <b>chiffrées</b> sur l'appareil. " : ". ") +
+    "Lance <code>node server/server.js</code> pour un stockage " +
     "centralisé et partagé entre appareils, ou utilise la synchronisation des cochages ci-dessous.";
 }
 
@@ -3577,6 +3614,26 @@ function renderSettings() {
     '<div class="muted small">Au chargement, l\'app demande ce mot de passe ; « Se souvenir sur cet appareil » l\'évite ensuite. ' +
     "Verrou simple contre les curieux — le chiffrement des données n'en dépend pas.</div>" +
     '<div class="row-actions"><button class="btn" id="st-locknow">Verrouiller maintenant</button></div>' +
+    "<h3>Chiffrement des données (coffre)</h3>" +
+    (Vault.ready
+      ? '<div class="note">Chiffrement de bout en bout <b>actif</b> : les données sont chiffrées sur cet appareil (AES-GCM) avant tout envoi — le serveur n\'en stocke qu\'une copie illisible, et il refuse l\'accès sans le mot de passe. Utilise le <b>même mot de passe sur tous les appareils</b>.</div>' +
+        '<div class="form-grid">' +
+        '<label class="full">Mot de passe actuel <input type="password" id="enc-cur" autocomplete="current-password"></label>' +
+        '<label class="full">Nouveau mot de passe <input type="password" id="enc-new" autocomplete="new-password" placeholder="8 caractères minimum, préfère une phrase longue"></label>' +
+        '<label class="full">Confirmer le nouveau <input type="password" id="enc-new2" autocomplete="new-password"></label>' +
+        "</div>" +
+        '<div class="row-actions"><button class="btn" id="enc-change">Changer le mot de passe du coffre</button>' +
+        '<button class="btn" id="enc-lock">Verrouiller maintenant</button></div>' +
+        '<div class="muted small">Le mot de passe est demandé à chaque chargement (les clés ne restent qu\'en mémoire). ' +
+        "Perdu = données définitivement illisibles, sur tous les appareils — note-le ailleurs (carnet, gestionnaire de mots de passe).</div>"
+      : '<div class="form-grid">' +
+        '<label class="full">Mot de passe de chiffrement <input type="password" id="enc-pass" autocomplete="new-password" placeholder="8 caractères minimum, préfère une phrase longue"></label>' +
+        '<label class="full">Confirmer <input type="password" id="enc-pass2" autocomplete="new-password"></label>' +
+        "</div>" +
+        '<div class="row-actions"><button class="btn primary" id="enc-enable">Activer le chiffrement</button></div>' +
+        '<div class="muted small">Chiffrement de bout en bout : les données (état, sorties, traces GPS) sont chiffrées dans ce navigateur ' +
+        "avant tout envoi et sur le serveur ; sans le mot de passe, personne — pas même le serveur — ne peut les lire. " +
+        "Le mot de passe n'est récupérable par personne : perdu = données illisibles. À activer séparément sur chaque appareil avec le même mot de passe.</div>") +
     "<h3>Profil coureur</h3>" +
     '<div class="form-grid">' +
     '<label>FC max (bpm) <input type="number" id="st-fcm" min="100" max="230" placeholder="ex. 185" value="' + (state.profile && state.profile.fcm || "") + '"></label>' +
@@ -3646,6 +3703,59 @@ function renderSettings() {
     localStorage.removeItem(UNLOCK_KEY);
     checkLock();
     toast("Verrouillé — le mot de passe sera demandé au prochain chargement.");
+  });
+  /* ---- chiffrement de bout en bout : activer / changer / verrouiller ---- */
+  const encWarn = () =>
+    confirm("Le mot de passe du coffre n'est récupérable par personne.\n" +
+      "Si tu le perds, les données sont définitivement illisibles (navigateur ET serveur).\n" +
+      "Note-le ailleurs avant de continuer. OK pour continuer ?");
+  const encEnable = $("#enc-enable");
+  if (encEnable) encEnable.addEventListener("click", async () => {
+    const p1 = $("#enc-pass").value, p2 = $("#enc-pass2").value;
+    if (p1.length < 8) { toast("8 caractères minimum — et préfère une phrase longue."); return; }
+    if (p1 !== p2) { toast("Les deux mots de passe diffèrent."); return; }
+    if (!encWarn()) return;
+    encEnable.disabled = true; encEnable.textContent = "Chiffrement…";
+    try {
+      await Vault.create(p1);
+      await registerVaultOnServer();
+      save(); // chiffre localStorage (la copie en clair est effacée) + pousse le blob chiffré
+      toast("Chiffrement activé : les données sont illisibles sans ce mot de passe.");
+      renderSettings();
+    } catch (e) {
+      encEnable.disabled = false; encEnable.textContent = "Activer le chiffrement";
+      toast("Activation impossible : " + ((e && e.message) || e));
+    }
+  });
+  const encChange = $("#enc-change");
+  if (encChange) encChange.addEventListener("click", async () => {
+    const cur = $("#enc-cur").value, p1 = $("#enc-new").value, p2 = $("#enc-new2").value;
+    if (p1.length < 8) { toast("8 caractères minimum — et préfère une phrase longue."); return; }
+    if (p1 !== p2) { toast("Les deux nouveaux mots de passe diffèrent."); return; }
+    if (!encWarn()) return;
+    encChange.disabled = true; encChange.textContent = "Changement…";
+    try {
+      /* le mot de passe actuel doit redonner la même clé d'accès que celle en mémoire */
+      const probe = await Vault.deriveKeys(cur, Vault.salt);
+      if (probe.apiKey !== Vault.apiKey) { toast("Mot de passe actuel incorrect."); return; }
+      const oldKey = Vault.apiKey;
+      await Vault.create(p1); // nouveau sel + nouvelles clés
+      const r = await registerVaultOnServer(oldKey); // l'ancienne clé autorise le remplacement
+      save(); // re-scelle localStorage + pousse le blob chiffré avec la nouvelle clé
+      toast(r.ok ? "Mot de passe du coffre changé — utilise-le sur tes autres appareils."
+        : "Changé localement, mais le serveur a refusé la mise à jour (HTTP " + r.status + ") — réessaie ou vérifie le serveur.");
+      renderSettings();
+    } catch (e) {
+      toast("Changement impossible : " + ((e && e.message) || e));
+    } finally {
+      encChange.disabled = false; encChange.textContent = "Changer le mot de passe du coffre";
+    }
+  });
+  const encLock = $("#enc-lock");
+  if (encLock) encLock.addEventListener("click", () => {
+    save(); // rien à perdre au rechargement
+    Vault.lock();
+    location.reload(); // les clés n'existaient qu'en mémoire : tout disparaît
   });
   $("#st-test").addEventListener("click", async () => {
     const key = $("#st-key").value.trim();
@@ -3786,6 +3896,9 @@ function copyText(txt, msg) {
 const ServerSync = {
   on: false,
   tracks: false,   // le serveur stocke-t-il les traces GPS séparément (R2) ?
+  authRequired: false, // le serveur exige-t-il la clé d'accès (coffre enregistré) ?
+  blocked: false,  // coffre verrouillé : on attend le mot de passe avant toute synchro
+  inited: false,
   pushTimer: null,
   pullTimer: null,
   pushWarned: false,
@@ -3794,12 +3907,41 @@ const ServerSync = {
   async loadTracks() {
     if (!this.on || !this.tracks) return;
     const jobs = state.runs.filter(r => r.trackRef && !r.points).map(r =>
-      fetch("api/track?id=" + r.trackRef, { cache: "no-store" })
-        .then(res => res.ok ? res.text() : null)
-        .then(txt => { try { r.points = JSON.parse(txt); } catch (e) { } })
+      this.getTrack(r.trackRef)
+        .then(pts => { if (pts && pts.length > 1) r.points = pts; })
         .catch(() => { })
     );
     if (jobs.length) await Promise.all(jobs);
+  },
+  /* trace GPS : chiffrée comme le reste (Vault.AAD_TRACK) avant l'envoi,
+     déchiffrée à la réception ; les traces héritées en clair restent lisibles */
+  async getTrack(id) {
+    const res = await fetch("api/track?id=" + id, { cache: "no-store", headers: Vault.headers() });
+    if (!res.ok) return null;
+    let obj = null;
+    try { obj = JSON.parse(await res.text()); } catch (e) { return null; }
+    if (obj && obj.enc === 1) {
+      if (!Vault.ready) return null;
+      try { return await Vault.open(obj, Vault.AAD_TRACK); } catch (e) { return null; }
+    }
+    return obj;
+  },
+  async putTrack(id, points) {
+    if (!this.on) return;
+    let body = null;
+    try { body = JSON.stringify(Vault.ready ? await Vault.seal(points, Vault.AAD_TRACK) : points); }
+    catch (e) { return; }
+    try {
+      await fetch("api/track?id=" + id, {
+        method: "PUT",
+        headers: Object.assign({ "Content-Type": "application/json" }, Vault.headers()),
+        body: body
+      });
+    } catch (e) { }
+  },
+  delTrack(id) {
+    if (!this.on) return;
+    fetch("api/track?id=" + id, { method: "DELETE", headers: Vault.headers() }).catch(() => { });
   },
 
   async init() {
@@ -3810,25 +3952,46 @@ const ServerSync = {
       if (!ping || !ping.ok) return;
       this.on = true;
       this.tracks = !!ping.tracks;
-      await this.pull(true);
-      await this.loadTracks();
-      this.pullTimer = setInterval(() => this.pull(false), 60000); // resynchronisation périodique
-      this.polarTimer = setInterval(() => PolarSync.auto(), 300000); // sorties + récupération Polar toutes les 5 min
+      this.authRequired = !!ping.auth;
+      updateStorageBadge();
+      /* le serveur exige la clé, ou un coffre local attend son mot de passe :
+         on ne synchronise rien avant le déverrouillage (ServerSync.init()
+         sera rappelé ensuite) */
+      if ((this.authRequired || Vault.pendingBlob) && !Vault.ready) {
+        this.blocked = true;
+        checkLock();
+        return;
+      }
+      if (!this.inited) {
+        this.inited = true;
+        await this.pull(true);
+        await this.loadTracks();
+        this.pullTimer = setInterval(() => this.pull(false), 60000); // resynchronisation périodique
+        this.polarTimer = setInterval(() => PolarSync.auto(), 300000); // sorties + récupération Polar toutes les 5 min
+      } else await this.pull(false);
     } catch (e) { /* pas de serveur : mode local, rien à faire */ }
     updateStorageBadge();
-    PolarSync.auto(); // import silencieux des sorties de la montre si connectée
+    if (!this.blocked) PolarSync.auto(); // import silencieux des sorties de la montre si connectée
   },
 
   async pull(adopt) {
-    if (!this.on) return;
+    if (!this.on || this.blocked) return;
     try {
-      const res = await fetch("api/state", { cache: "no-store" });
+      const res = await fetch("api/state", { cache: "no-store", headers: Vault.headers() });
       if (!res.ok) return;
       const data = await res.json();
-      const remote = data && data.state;
+      let remote = data && data.state;
+      if (remote && remote.enc === 1) {
+        if (!Vault.ready) return; // coffre verrouillé : le chiffré est opaque, on garde le local
+        try { remote = await Vault.open(remote, Vault.AAD_STATE); }
+        catch (e) {
+          toast("Serveur : données illisibles avec ce mot de passe (chiffrées avec un autre ?) — cet appareil conserve ses données locales.");
+          return;
+        }
+      }
       if (!remote) { this.push(); return; }   // serveur vide : envoyer l'état local
       const merged = mergeStates(state, remote);
-      merged.updatedAt = Math.max(state.updatedAt || 0, remote.updatedAt || 0);
+      merged.updatedAt = Math.max(state.updatedAt || 0, data.updatedAt || remote.updatedAt || 0);
       const same = JSON.stringify(sortForCompare(merged)) === JSON.stringify(sortForCompare(state));
       if (!same) {
         state = merged;
@@ -3843,29 +4006,53 @@ const ServerSync = {
   },
 
   push() {
-    if (!this.on) return;
+    if (!this.on || this.blocked) return;
     clearTimeout(this.pushTimer);
-    this.pushTimer = setTimeout(() => {
+    this.pushTimer = setTimeout(async () => {
       let payload = state;
       if (this.tracks)
         payload = Object.assign({}, state, {
           runs: state.runs.map(r => (r.trackRef && r.points) ? Object.assign({}, r, { points: null }) : r)
         });
       let body = null;
-      try { body = JSON.stringify(payload); } catch (e) { }
+      try {
+        body = Vault.ready
+          ? JSON.stringify(Object.assign(await Vault.seal(payload, Vault.AAD_STATE), { updatedAt: payload.updatedAt || 0 }))
+          : JSON.stringify(payload);
+      } catch (e) { return; }
       fetch("api/state", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: Object.assign({ "Content-Type": "application/json" }, Vault.headers()),
         body: body
       }).then(res => {
-        if (!res.ok && !this.pushWarned) {
+        if (res.ok || res.status === 409) return; // 409 : anti-rollback serveur, la copie distante est plus récente
+        if (!this.pushWarned) {
           this.pushWarned = true;
-          toast("Synchronisation impossible (état trop volumineux ?) — les données restent sur cet appareil.");
+          toast(res.status === 401 || res.status === 403
+            ? "Synchronisation refusée : mot de passe du coffre non accepté par le serveur — les données restent sur cet appareil."
+            : "Synchronisation impossible (état trop volumineux ?) — les données restent sur cet appareil.");
         }
       }).catch(() => {});
     }, 800);
   }
 };
+
+/* enregistre le coffre sur le serveur : { salt, keyHash } — keyHash est le
+   SHA-256 de la clé d'accès : le serveur ne voit jamais le mot de passe.
+   oldKey : lors d'un changement de mot de passe, c'est l'ancienne clé qui
+   autorise le remplacement. Sans serveur (mode local), silencieusement sans effet. */
+async function registerVaultOnServer(oldKey) {
+  if (!ServerSync.on || !Vault.ready) return { ok: false, status: 0 };
+  try {
+    const res = await fetch("api/auth", {
+      method: "PUT",
+      headers: Object.assign({ "Content-Type": "application/json" },
+        oldKey ? { "X-TT-Key": oldKey } : Vault.headers()),
+      body: JSON.stringify({ salt: Vault.salt, keyHash: await Vault.keyHash() })
+    });
+    return { ok: res.ok, status: res.status };
+  } catch (e) { return { ok: false, status: 0 }; }
+}
 
 /* ================= montre Polar (Vantage M3, API AccessLink via le worker) =================
    Le worker porte l'OAuth et le jeton ; l'app ne fait que convertir les exercices
@@ -3893,26 +4080,26 @@ const PolarSync = {
 
   async status() {
     try {
-      const res = await fetch("api/polar/status", { cache: "no-store" });
+      const res = await fetch("api/polar/status", { cache: "no-store", headers: Vault.headers() });
       if (!res.ok) return null;
       return await res.json();
     } catch (e) { return null; }
   },
   async exercises() {
-    const res = await fetch("api/polar/exercises", { cache: "no-store" });
+    const res = await fetch("api/polar/exercises", { cache: "no-store", headers: Vault.headers() });
     let data = null;
     try { data = await res.json(); } catch (e) { }
     if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
     return data.exercises || [];
   },
   async gpx(id) {
-    const res = await fetch("api/polar/gpx?id=" + encodeURIComponent(id), { cache: "no-store" });
+    const res = await fetch("api/polar/gpx?id=" + encodeURIComponent(id), { cache: "no-store", headers: Vault.headers() });
     if (!res.ok) throw new Error("GPX indisponible (" + res.status + ")");
     return await res.text();
   },
   /* détail d'un exercice : zones de FC + séries (samples) en ligne */
   async detail(id) {
-    const res = await fetch("api/polar/exercise?id=" + encodeURIComponent(id), { cache: "no-store" });
+    const res = await fetch("api/polar/exercise?id=" + encodeURIComponent(id), { cache: "no-store", headers: Vault.headers() });
     let data = null;
     try { data = await res.json(); } catch (e) { }
     if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
@@ -3938,11 +4125,7 @@ const PolarSync = {
           if (!run.dist) run.dist = Math.round(s.dist * 100) / 100;
           if (run.points.length > 40 && ServerSync.tracks) {
             run.trackRef = run.id;
-            fetch("api/track?id=" + run.trackRef, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(run.points)
-            }).catch(() => {});
+            ServerSync.putTrack(run.trackRef, run.points);
             run.points = null;
           }
         }
@@ -4115,11 +4298,7 @@ const PolarSync = {
     /* trace GPS volumineuse : rangée hors état (R2) quand le serveur le permet */
     if (run.points && run.points.length > 40 && ServerSync.tracks) {
       run.trackRef = run.id;
-      fetch("api/track?id=" + run.trackRef, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(run.points)
-      }).catch(() => {});
+      ServerSync.putTrack(run.trackRef, run.points);
       run.points = null;
     }
     return run;
@@ -4156,7 +4335,7 @@ const PolarSync = {
 
   /* infos physiques Polar -> profil coureur (FC max, FC repos, poids, VO2max) */
   async refreshProfile() {
-    const res = await fetch("api/polar/physical-info", { cache: "no-store" });
+    const res = await fetch("api/polar/physical-info", { cache: "no-store", headers: Vault.headers() });
     let data = null;
     try { data = await res.json(); } catch (e) { }
     if (!res.ok || !data || !data.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
@@ -4186,7 +4365,7 @@ const PolarSync = {
     if (!ServerSync.on || !(state.polar && state.polar.connected)) return false;
     const to = isoDate(new Date());
     const from = isoDate(new Date(Date.now() - 27 * 864e5)); // Polar : plage max 28 jours
-    const get = (url) => fetch(url, { cache: "no-store" })
+    const get = (url) => fetch(url, { cache: "no-store", headers: Vault.headers() })
       .then(r => r.ok ? r.json() : null)
       .catch(() => null);
     const [sleep, rec, load] = await Promise.all([
@@ -4436,8 +4615,8 @@ function sortForCompare(st) {
 function updateStorageBadge() {
   const el = $("#storage-mode");
   if (el) el.textContent = ServerSync.on
-    ? "Stockage : serveur centralisé — partagé entre appareils"
-    : "Stockage : ce navigateur uniquement (localStorage)";
+    ? "Stockage : serveur centralisé — " + (Vault.ready ? "chiffré de bout en bout" : "partagé entre appareils")
+    : "Stockage : ce navigateur uniquement" + (Vault.ready ? " (chiffré)" : " (localStorage)");
 }
 
 /* ================= onglets : flèche masquer/afficher ================= */
@@ -4455,19 +4634,99 @@ $("#nav-toggle").addEventListener("click", () => {
 
 /* ================= verrouillage ================= */
 const UNLOCK_KEY = "trainingtrail_unlock";
+let lockMode = "app"; // "app" : verrou simple ; "vault" : mot de passe du coffre chiffré
 function checkLock() {
   const ov = $("#lock-modal");
   if (!ov) return;
+  /* coffre chiffré : quand il existe (blob local ou serveur qui exige la clé),
+     c'est LE verrou — le mot de passe de l'état ne s'ajoute pas dessus */
+  const needVault = !Vault.ready && (Vault.pendingBlob || ServerSync.authRequired);
+  if (Vault.ready || needVault) {
+    if (!needVault) { ov.classList.add("hidden"); return; }
+    lockMode = "vault";
+    $("#lock-title").textContent = "Données chiffrées";
+    $("#lock-desc").textContent = "Entre le mot de passe de chiffrement : sans lui, ni cet appareil ni le serveur ne peuvent lire les données.";
+    const rw = $("#lock-remember-wrap");
+    if (rw) rw.style.display = "none"; // la clé reste en mémoire uniquement : pas de « se souvenir »
+    ov.classList.remove("hidden");
+    setTimeout(() => { const p = $("#lock-pass"); if (p) p.focus(); }, 60);
+    return;
+  }
+  lockMode = "app";
+  const rw = $("#lock-remember-wrap");
+  if (rw) rw.style.display = "";
+  $("#lock-title").textContent = "TrainingTrail verrouillé";
+  $("#lock-desc").textContent = "Entre le mot de passe de l'application pour continuer.";
   if (!state.password || localStorage.getItem(UNLOCK_KEY) === "1") { ov.classList.add("hidden"); return; }
   ov.classList.remove("hidden");
   setTimeout(() => { const p = $("#lock-pass"); if (p) p.focus(); }, 60);
 }
 function tryUnlock() {
   const p = $("#lock-pass");
-  if (!p || p.value !== state.password) { toast("Mot de passe incorrect."); return; }
+  if (!p) return;
+  if (lockMode === "vault") { tryVaultUnlock(p); return; }
+  if (p.value !== state.password) { toast("Mot de passe incorrect."); return; }
   if ($("#lock-remember").checked) localStorage.setItem(UNLOCK_KEY, "1");
   p.value = "";
   $("#lock-modal").classList.add("hidden");
+}
+/* déverrouillage du coffre : dérive les clés, vérifie le mot de passe sur le
+   blob local (tag AES-GCM) ou, à défaut, auprès du serveur (X-TT-Key) */
+async function unlockVault(pass) {
+  const blob = Vault.pendingBlob || Vault.localBlob();
+  let salt = blob && blob.salt;
+  if (!salt) {
+    try {
+      const res = await fetch("api/salt", { cache: "no-store" });
+      const d = res.ok ? await res.json() : null;
+      if (d && d.registered && d.salt) salt = d.salt;
+    } catch (e) { }
+  }
+  if (!salt) throw new Error("no-vault");
+  const keys = await Vault.deriveKeys(pass, salt);
+  if (blob) {
+    try {
+      const plain = await Vault.openWith(keys, blob, Vault.AAD_STATE);
+      Vault.adopt(keys);
+      Vault.pendingBlob = null;
+      return plain;
+    } catch (e) { throw new Error("bad"); } // tag invalide = mot de passe incorrect
+  }
+  /* pas de blob local : le serveur tranche (401 = mauvais mot de passe) */
+  Vault.adopt(keys);
+  const res = await fetch("api/state", { cache: "no-store", headers: Vault.headers() });
+  if (res.status === 401 || res.status === 403) { Vault.lock(); throw new Error("bad"); }
+  if (!res.ok) { Vault.lock(); throw new Error("serveur " + res.status); }
+  return null;
+}
+async function tryVaultUnlock(p) {
+  const pass = p.value;
+  if (!pass) return;
+  const go = $("#lock-go");
+  p.disabled = true; go.disabled = true; go.textContent = "Déverrouillage…";
+  try {
+    const plain = await unlockVault(pass);
+    p.value = ""; p.disabled = false; go.disabled = false; go.textContent = "Déverrouiller";
+    $("#lock-modal").classList.add("hidden");
+    await afterVaultUnlock(plain);
+  } catch (e) {
+    p.disabled = false; go.disabled = false; go.textContent = "Déverrouiller";
+    toast(e && e.message === "bad" ? "Mot de passe incorrect." :
+      e && e.message === "no-vault" ? "Aucun coffre chiffré à déverrouiller." :
+      "Déverrouillage impossible (" + ((e && e.message) || e) + ").");
+  }
+}
+/* coffre ouvert : on hydrate l'état déchiffré puis on relance la synchro */
+async function afterVaultUnlock(plain) {
+  if (plain && typeof plain === "object") {
+    Object.assign(state, plain);
+    normalizeState();
+  }
+  ServerSync.blocked = false;
+  renderView(curView);
+  updateHeader();
+  ServerSync.init(); // ping + pull : la fusion additive ramène l'état du serveur
+  checkLock();
 }
 $("#lock-go").addEventListener("click", tryUnlock);
 $("#lock-pass").addEventListener("keydown", e => { if (e.key === "Enter") tryUnlock(); });

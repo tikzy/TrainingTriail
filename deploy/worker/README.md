@@ -7,10 +7,25 @@ L'application n'a **aucune modification** : `ServerSync` appelle `api/ping` et
 `api/state` en URLs relatives (same-origin).
 
 ```
-├── wrangler.toml    config (liaison ASSETS -> ../../site, liaison D1)
-├── schema.sql       table `state` (une ligne : l'état complet en JSON)
-└── src/worker.js    GET /api/ping, GET/PUT /api/state, sinon fichiers statiques
+├── wrangler.toml    config (liaison ASSETS -> ../../site, D1, R2, ratelimit)
+├── schema.sql       tables `state`, `polar`, `auth` (coffre : sel + SHA-256 de la clé)
+└── src/worker.js    GET /api/ping, GET /api/salt, PUT /api/auth, GET/PUT /api/state,
+│                    /api/track, /api/polar/*, sinon fichiers statiques
 ```
+
+## Sécurité
+
+- **Chiffrement de bout en bout** : dès qu'un coffre est enregistré (activation
+  dans l'app, Réglages → Chiffrement des données), D1 et R2 ne stockent que du
+  chiffré (AES-GCM côté navigateur) et l'API exige l'en-tête `X-TT-Key`
+  (SHA-256 de la clé d'accès dans la table `auth` — jamais le mot de passe).
+- **Limitation de débit** : liaison native `RATE_LIMITER` (300 req/min par IP,
+  wrangler >= 4.36) avec repli en mémoire par isolat ; blocage après échecs
+  répétés de clé ; anti-rollback sur l'état (409) ; en-têtes de sécurité + CSP
+  sur l'API comme sur les fichiers statiques.
+- Après mise à jour : relancer `npx wrangler d1 execute trainingtrail
+  --remote --file=schema.sql` (les `CREATE TABLE IF NOT EXISTS` sont sans
+  risque pour les données existantes).
 
 ## Mise en route
 

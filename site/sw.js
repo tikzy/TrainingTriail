@@ -1,7 +1,7 @@
 /* Service worker TrainingTrail — page : réseau d'abord (mises à jour
    immédiates) puis cache hors ligne ; fichiers versionnés : cache-first.
    À chaque déploiement : mettre à jour CACHE et les versions ?v= ci-dessous. */
-const CACHE = "trainingtrail-2026102809";
+const CACHE = "trainingtrail-2026102811";
 const ASSETS = [
   "./",
   "./manifest.webmanifest",
@@ -11,7 +11,8 @@ const ASSETS = [
   "./js/data.js?v=2026102809",
   "./js/anim.js?v=2026102809",
   "./js/gpx.js?v=2026102809",
-  "./js/app.js?v=2026102809"
+  "./js/crypto.js?v=2026102811",
+  "./js/app.js?v=2026102811"
 ];
 
 self.addEventListener("install", e => {

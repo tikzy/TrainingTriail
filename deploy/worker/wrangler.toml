@@ -27,3 +27,11 @@ database_id = "e06dae61-fd57-4b96-a0d0-ba958cbc67fb"
 [[r2_buckets]]
 binding = "TRACKS"
 bucket_name = "trainingtrail-tracks"
+
+# Limitation de débit native (Cloudflare) sur /api/* : 300 requêtes/minute par IP.
+# Nécessite wrangler >= 4.36 ; si absent, le worker replie sur un compteur
+# en mémoire par isolat (voir src/worker.js).
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1"
+simple = { limit = 300, period = 60 }
