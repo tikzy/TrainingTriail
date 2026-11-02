@@ -1,0 +1,5 @@
+# données runtime du serveur local : on commit l'état (sauvegarde), pas les
+# traces GPS, la corbeille ni le coffre (sel + hash de clé)
+server/data/tracks/
+server/data/trash/
+server/data/auth.json
