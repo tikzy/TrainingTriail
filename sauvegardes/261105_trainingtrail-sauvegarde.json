@@ -1,0 +1,590 @@
+{
+  "start": "2026-10-19",
+  "mistral": {
+    "key": "",
+    "model": "mistral-small-latest",
+    "url": "https://api.mistral.ai"
+  },
+  "polar": {
+    "connected": true,
+    "lastSync": 1793906562478
+  },
+  "polarNights": {
+    "2026-10-28": {
+      "slp": {
+        "score": 83,
+        "dur": 459,
+        "deep": 69,
+        "rem": 136,
+        "cont": 3.5
+      },
+      "rec": {
+        "ans": null,
+        "hrv": null,
+        "br": null,
+        "hr": null,
+        "st": null
+      },
+      "load": {
+        "v": 84.95893,
+        "str": 73.222565,
+        "tol": null,
+        "st": "LOAD_STATUS_NOT_AVAILABLE"
+      }
+    },
+    "2026-10-29": {
+      "slp": {
+        "score": 60,
+        "dur": 376,
+        "deep": 98,
+        "rem": 68,
+        "cont": 2.5
+      },
+      "rec": {
+        "ans": null,
+        "hrv": null,
+        "br": null,
+        "hr": null,
+        "st": null
+      },
+      "load": {
+        "v": 88.8207,
+        "str": 78.42194,
+        "tol": 78.42194,
+        "st": "MAINTAINING"
+      }
+    },
+    "2026-10-30": {
+      "slp": {
+        "score": 69,
+        "dur": 350,
+        "deep": 71,
+        "rem": 96,
+        "cont": 3
+      },
+      "rec": {
+        "ans": null,
+        "hrv": null,
+        "br": null,
+        "hr": null,
+        "st": null
+      },
+      "load": {
+        "v": 0,
+        "str": 58.816456,
+        "tol": 58.816456,
+        "st": "MAINTAINING"
+      }
+    },
+    "2026-10-31": {
+      "slp": {
+        "score": 77,
+        "dur": 608,
+        "deep": 79,
+        "rem": 109,
+        "cont": 2.9
+      },
+      "rec": {
+        "ans": null,
+        "hrv": null,
+        "br": null,
+        "hr": null,
+        "st": null
+      },
+      "load": {
+        "v": 5.56783,
+        "str": 48.16673,
+        "tol": 48.16673,
+        "st": "MAINTAINING"
+      }
+    },
+    "2026-11-01": {
+      "slp": {
+        "score": 47,
+        "dur": 308,
+        "deep": 50,
+        "rem": 48,
+        "cont": 2
+      },
+      "rec": {
+        "ans": null,
+        "hrv": null,
+        "br": null,
+        "hr": null,
+        "st": null
+      },
+      "load": {
+        "v": 118.722,
+        "str": 59.92594,
+        "tol": 59.92594,
+        "st": "MAINTAINING"
+      }
+    },
+    "2026-11-02": {
+      "slp": {
+        "score": 87,
+        "dur": 461,
+        "deep": 98,
+        "rem": 78,
+        "cont": 3.4
+      },
+      "rec": {
+        "ans": null,
+        "hrv": null,
+        "br": null,
+        "hr": null,
+        "st": null
+      },
+      "load": {
+        "v": 10.621,
+        "str": 52.882378,
+        "tol": 52.882378,
+        "st": "MAINTAINING"
+      }
+    },
+    "2026-10-27": {
+      "load": {
+        "v": 61.48619,
+        "str": 61.48619,
+        "tol": null,
+        "st": "LOAD_STATUS_NOT_AVAILABLE"
+      }
+    },
+    "2026-11-03": {
+      "slp": {
+        "score": 88,
+        "dur": 431,
+        "deep": 76,
+        "rem": 100,
+        "cont": 4.5
+      },
+      "rec": {
+        "ans": null,
+        "hrv": null,
+        "br": null,
+        "hr": null,
+        "st": null
+      },
+      "load": {
+        "v": 0,
+        "str": 44.098637,
+        "tol": 46.272083,
+        "st": "MAINTAINING"
+      }
+    },
+    "2026-11-05": {
+      "slp": {
+        "score": 85,
+        "dur": 436,
+        "deep": 88,
+        "rem": 99,
+        "cont": 3.5
+      },
+      "rec": {
+        "ans": null,
+        "hrv": null,
+        "br": null,
+        "hr": null,
+        "st": null
+      },
+      "load": {
+        "v": 21.1638,
+        "str": 37.247517,
+        "tol": 49.599846,
+        "st": "DETRAINING"
+      }
+    },
+    "2026-11-04": {
+      "load": {
+        "v": 104.658,
+        "str": 46.91279,
+        "tol": 52.759407,
+        "st": "MAINTAINING"
+      }
+    }
+  },
+  "password": null,
+  "lastShoeId": 9,
+  "lastWeekView": null,
+  "welcomed": true,
+  "updatedAt": 1793906562548,
+  "done": {
+    "3-0-0": true,
+    "3-2-0": true
+  },
+  "hidden": {},
+  "runs": [
+    {
+      "id": 1,
+      "date": "2026-11-02",
+      "code": "AUTRE",
+      "dist": 0,
+      "dur": 22,
+      "dplus": 0,
+      "feel": null,
+      "knee": null,
+      "ankle": null,
+      "notes": "Importé depuis Polar (Polar Vantage M3)",
+      "shoeId": null,
+      "route": null,
+      "points": null,
+      "trackRef": null,
+      "polarId": "y1D3Dq7B",
+      "polar": {
+        "sport": "OTHER",
+        "detailed": "STRENGTH_TRAINING",
+        "hr": {
+          "average": 103,
+          "maximum": 131
+        },
+        "ri": null,
+        "calories": 140,
+        "cardioLoad": 10.621
+      },
+      "planned": null,
+      "planKey": null
+    },
+    {
+      "id": 2,
+      "date": "2026-10-27",
+      "code": "CAP",
+      "dist": 4.31,
+      "dur": 23,
+      "dplus": 142,
+      "feel": 8,
+      "knee": 0,
+      "ankle": 0,
+      "notes": "Import CSV Polar Flow : Theo_Kziazyk_2026-10-27_15-56-00.CSV",
+      "shoeId": 9,
+      "route": "chemin",
+      "points": null,
+      "trackRef": null,
+      "polarId": "csv:2026-10-27T155600",
+      "polar": {
+        "sport": "RUNNING",
+        "detailed": "RUNNING",
+        "hr": {
+          "average": 155,
+          "maximum": 180
+        },
+        "ri": null,
+        "calories": 324,
+        "cardioLoad": null
+      },
+      "planned": null,
+      "planKey": null
+    },
+    {
+      "id": 3,
+      "date": "2026-10-28",
+      "code": "YOGA",
+      "dist": 0,
+      "dur": 14,
+      "dplus": 0,
+      "feel": null,
+      "knee": null,
+      "ankle": null,
+      "notes": "Import CSV Polar Flow : Theo_Kziazyk_2026-10-28_06-50-09.CSV",
+      "shoeId": null,
+      "route": null,
+      "points": null,
+      "trackRef": null,
+      "polarId": "csv:2026-10-28T065009",
+      "polar": {
+        "sport": "YOGA",
+        "detailed": "YOGA",
+        "hr": {
+          "average": 75,
+          "maximum": 97
+        },
+        "ri": null,
+        "calories": 34,
+        "cardioLoad": null
+      },
+      "planned": "VMA : 2 × (8 × 30''/30'') — fractionné court",
+      "planKey": "2-2-0"
+    },
+    {
+      "id": 4,
+      "date": "2026-10-28",
+      "code": "NAT",
+      "dist": 1.5,
+      "dur": 63,
+      "dplus": 0,
+      "feel": null,
+      "knee": null,
+      "ankle": null,
+      "notes": "Import CSV Polar Flow : Theo_Kziazyk_2026-10-28_17-25-50.CSV",
+      "shoeId": null,
+      "route": null,
+      "points": null,
+      "trackRef": null,
+      "polarId": "csv:2026-10-28T172550",
+      "polar": {
+        "sport": "SWIMMING",
+        "detailed": "SWIMMING",
+        "hr": {
+          "average": 127,
+          "maximum": 166
+        },
+        "ri": null,
+        "calories": 638,
+        "cardioLoad": null
+      },
+      "planned": "VMA : 2 × (8 × 30''/30'') — fractionné court",
+      "planKey": "2-2-0"
+    },
+    {
+      "id": 5,
+      "date": "2026-11-01",
+      "code": "CAP",
+      "dist": 9.79,
+      "dur": 59,
+      "dplus": 46,
+      "feel": 8,
+      "knee": 0,
+      "ankle": 0,
+      "notes": "Import CSV Polar Flow : Theo_Kziazyk_2026-11-01_17-06-18.CSV",
+      "shoeId": 10,
+      "route": "route",
+      "points": null,
+      "trackRef": null,
+      "polarId": "csv:2026-11-01T170618",
+      "polar": {
+        "sport": "RUNNING",
+        "detailed": "RUNNING",
+        "hr": {
+          "average": 150,
+          "maximum": 190
+        },
+        "ri": null,
+        "calories": 798,
+        "cardioLoad": null
+      },
+      "planned": null,
+      "planKey": null
+    },
+    {
+      "id": 6,
+      "date": "2026-10-31",
+      "code": "AUTRE",
+      "dist": 0,
+      "dur": 21,
+      "dplus": 0,
+      "feel": null,
+      "knee": null,
+      "ankle": null,
+      "notes": "Import CSV Polar Flow : Theo_Kziazyk_2026-10-31_15-40-52.CSV",
+      "shoeId": null,
+      "route": null,
+      "points": null,
+      "trackRef": null,
+      "polarId": "csv:2026-10-31T154052",
+      "polar": {
+        "sport": "STRENGTH_TRAINING",
+        "detailed": "STRENGTH_TRAINING",
+        "hr": {
+          "average": 86,
+          "maximum": 120
+        },
+        "ri": null,
+        "calories": 82,
+        "cardioLoad": null
+      },
+      "planned": null,
+      "planKey": null
+    },
+    {
+      "id": 7,
+      "date": "2026-10-28",
+      "code": "V",
+      "dist": 3.84,
+      "dur": 16,
+      "dplus": 70,
+      "feel": null,
+      "knee": null,
+      "ankle": null,
+      "notes": "Import CSV Polar Flow : Theo_Kziazyk_2026-10-28_18-46-56.CSV",
+      "shoeId": null,
+      "route": null,
+      "points": null,
+      "trackRef": null,
+      "polarId": "csv:2026-10-28T184656",
+      "polar": {
+        "sport": "CYCLING",
+        "detailed": "CYCLING",
+        "hr": {
+          "average": 123,
+          "maximum": 151
+        },
+        "ri": null,
+        "calories": 144,
+        "cardioLoad": null
+      },
+      "planned": "VMA : 2 × (8 × 30''/30'') — fractionné court",
+      "planKey": "2-2-0"
+    },
+    {
+      "id": 8,
+      "date": "2026-10-29",
+      "code": "CAP",
+      "dist": 8.77,
+      "dur": 48,
+      "dplus": 16,
+      "feel": 8,
+      "knee": 0,
+      "ankle": 0,
+      "notes": "Import CSV Polar Flow : Theo_Kziazyk_2026-10-29_11-56-01.CSV",
+      "shoeId": 10,
+      "route": "route",
+      "points": null,
+      "trackRef": null,
+      "polarId": "csv:2026-10-29T115601",
+      "polar": {
+        "sport": "RUNNING",
+        "detailed": "RUNNING",
+        "hr": {
+          "average": 149,
+          "maximum": 173
+        },
+        "ri": 56,
+        "calories": 652,
+        "cardioLoad": null
+      },
+      "planned": null,
+      "planKey": null
+    },
+    {
+      "id": 11,
+      "date": "2026-09-02",
+      "code": "EV",
+      "dist": 20,
+      "dur": 0,
+      "dplus": 0,
+      "feel": null,
+      "knee": null,
+      "ankle": null,
+      "notes": "",
+      "shoeId": 10,
+      "route": null,
+      "points": null,
+      "trackRef": null,
+      "planned": "EV 45' — 250 m D+",
+      "planKey": "1-2-0"
+    },
+    {
+      "id": 12,
+      "date": "2026-09-02",
+      "code": "EV",
+      "dist": 30,
+      "dur": 0,
+      "dplus": 0,
+      "feel": null,
+      "knee": null,
+      "ankle": null,
+      "notes": "",
+      "shoeId": 9,
+      "route": null,
+      "points": null,
+      "trackRef": null,
+      "planned": "EV 45' — 250 m D+",
+      "planKey": "1-2-0"
+    },
+    {
+      "id": 13,
+      "date": "2026-11-04",
+      "code": "CAP",
+      "dist": 6.61,
+      "dur": 47,
+      "dplus": 0,
+      "feel": 7,
+      "knee": 0,
+      "ankle": 0,
+      "notes": "Importé depuis Polar (Polar Vantage M3) · Running Index 46",
+      "shoeId": 9,
+      "route": "sentier",
+      "points": null,
+      "trackRef": null,
+      "polarId": "5AmLnvqR",
+      "polar": {
+        "sport": "RUNNING",
+        "detailed": "TRAIL_RUNNING",
+        "hr": {
+          "average": 160,
+          "maximum": 180
+        },
+        "ri": 46,
+        "calories": 680,
+        "cardioLoad": 104.658
+      },
+      "planned": "Côtes : 6 × 1' en côte (fractionné progressif)",
+      "planKey": "3-2-0"
+    },
+    {
+      "id": 14,
+      "date": "2026-11-05",
+      "code": "CAP",
+      "dist": 2.35,
+      "dur": 16,
+      "dplus": 0,
+      "feel": null,
+      "knee": null,
+      "ankle": null,
+      "notes": "Importé depuis Polar (Polar Vantage M3) · Running Index 50",
+      "shoeId": null,
+      "route": null,
+      "points": null,
+      "trackRef": null,
+      "polarId": "PnpLn8LZ",
+      "polar": {
+        "sport": "RUNNING",
+        "detailed": "ROAD_RUNNING",
+        "hr": {
+          "average": 137,
+          "maximum": 165
+        },
+        "ri": 50,
+        "calories": 193,
+        "cardioLoad": 21.1638
+      },
+      "planned": null,
+      "planKey": null
+    }
+  ],
+  "shoes": [
+    {
+      "id": 9,
+      "name": "Altra trail",
+      "born": "2026-09-01",
+      "maxKm": 700,
+      "retired": false
+    },
+    {
+      "id": 10,
+      "name": "Altra route",
+      "born": "2026-09-01",
+      "maxKm": 700,
+      "retired": false
+    }
+  ],
+  "extra": [],
+  "custom": [],
+  "timers": {},
+  "profile": null,
+  "ui": {
+    "theme": "dark",
+    "font": 0
+  },
+  "loads": {},
+  "notes": {},
+  "moves": {
+    "3-0-1": {
+      "w": 3,
+      "d": 2
+    }
+  },
+  "daily": {},
+  "seq": 15,
+  "convs": [],
+  "convId": null
+}
