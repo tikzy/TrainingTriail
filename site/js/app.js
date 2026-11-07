@@ -3,8 +3,59 @@
 
 /* ================= état ================= */
 const LS_KEY = "trainingtrail_v1";
+const APP_VERSION = "20261111"; // version du build (doit matcher ?v= de index.html / sw.js)
+
+/* ================= sessions (comptes) =================
+   Plusieurs sessions sur le même appareil / le même serveur : chaque session
+   a son propre programme (PROGRAMS), son propre état local (clé localStorage
+   dédiée) et son propre emplacement sur le serveur (?user=<slug>).
+   La session du propriétaire (« Roi Burgonde », slug vide) utilise l'emplacement
+   racine historique (LS_KEY / state.json) : les données existantes sont
+   conservées sans migration. Le registre des sessions connues est local à
+   chaque appareil ; sur un nouvel appareil, on « rejoint » une session en
+   tapant son nom (le slug est déterministe). */
+const SESS_KEY = "trainingtrail_sessions_v1";
+/* mot de passe administrateur : exigé pour supprimer un compte (action
+   irréversible, local + serveur). Côté client c'est de l'obfuscation. */
+const ADMIN_PASSWORD = "Je-suis-1-Trainingtrail";
+function slugify(name) {
+  let s = String(name || "").trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // accents
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  if (s === "burgon-king" || s === "roi-burgonde") s = ""; // compte principal = emplacement racine
+  return s;
+}
+function loadSessions() {
+  try {
+    const r = JSON.parse(localStorage.getItem(SESS_KEY) || "null");
+    if (r && typeof r === "object" && r.list && typeof r.list === "object") return r;
+  } catch (e) { }
+  return null;
+}
+function saveSessions() { try { localStorage.setItem(SESS_KEY, JSON.stringify(SESS)); } catch (e) { } }
+function defaultSessionEntry() {
+  const a = (typeof ACCOUNTS !== "undefined" && ACCOUNTS[0]) || { name: "Roi Burgonde", program: "trail-des-forts", gif: "" };
+  return { name: a.name, program: a.program, gif: a.gif || (PROGRAMS["trail-des-forts"] || {}).gif || "", created: Date.now() };
+}
+/* registre des sessions : migration des données existantes (LS_KEY seul) */
+let SESS = loadSessions();
+if (!SESS) {
+  const hasLegacy = !!(localStorage.getItem(LS_KEY) || (typeof VAULT_LS_KEY !== "undefined" && localStorage.getItem(VAULT_LS_KEY)));
+  SESS = { active: hasLegacy ? "" : null, list: { "": defaultSessionEntry() } };
+  saveSessions();
+}
+if (!SESS.list[""]) SESS.list[""] = defaultSessionEntry();
+if (SESS.list[""] && SESS.list[""].name === "Burgon King") { SESS.list[""].name = "Roi Burgonde"; saveSessions(); } // renommage
+/* session active : slug valide, sinon "" (le sélecteur proposera de choisir) */
+let CUR_SLUG = (SESS.active != null && SESS.list[SESS.active]) ? SESS.active : "";
+const LS_KEY_CUR = CUR_SLUG ? LS_KEY + "_" + CUR_SLUG : LS_KEY;
+if (typeof Vault !== "undefined") Vault.lsKey = CUR_SLUG ? VAULT_LS_KEY + "_" + CUR_SLUG : VAULT_LS_KEY;
+/* programme de la session active (redirige RACE / BLOCKS / WEEKS) */
+const CUR_PLAN = useProgram((SESS.list[CUR_SLUG] || {}).program || "trail-des-forts");
+const CUR_SESS = () => SESS.list[CUR_SLUG] || SESS.list[""];
+
 let state = {
-  start: DEFAULT_START,
+  start: CUR_PLAN.start || DEFAULT_START,
   done: {},       // clé "w-d-i" -> true
   moves: {},      // clé "w-d-i" -> { w, d } : séance déplacée sur un autre jour
   hidden: {},     // clé "w-d-i" -> true : séance du programme masquée (onglet Semaine)
@@ -26,7 +77,8 @@ let state = {
   polar: { connected: false, lastSync: null }, // montre Polar : connectée au worker (jeton côté serveur)
   polarNights: {}, // nuits Polar : { "YYYY-MM-DD": { slp:{score,dur,deep,rem,cont}, rec:{ans,hrv,br,hr,st}, load:{v,str,tol,st} } }
   convs: [],      // conversations du coach : [{ id, title, created, msgs: [{id, ts, role, content, display?}] }]
-  convId: null    // conversation affichée (navigation ◀ ▶)
+  convId: null,   // conversation affichée (navigation ◀ ▶)
+  welcomed: false // GIF de bienvenue affiché à la première connexion de la session
 };
 
 let storageWarned = false;
@@ -37,7 +89,7 @@ function save() {
   state.updatedAt = Date.now();
   if (Vault.ready) persistEncrypted();
   else {
-    const write = () => localStorage.setItem(LS_KEY, JSON.stringify(state));
+    const write = () => localStorage.setItem(LS_KEY_CUR, JSON.stringify(state));
     try { write(); }
     catch (e) {
       // quota dépassé : compacter d'abord les traces GPS, puis les supprimer en dernier recours
@@ -63,8 +115,8 @@ function save() {
    (héritage) est effacée. Même repli anti-quota que le mode clair. */
 function persistEncrypted() {
   const attempt = () => Vault.seal(state, Vault.AAD_STATE).then(blob => {
-    localStorage.setItem(VAULT_LS_KEY, JSON.stringify(blob));
-    localStorage.removeItem(LS_KEY);
+    localStorage.setItem(Vault.lsKey || VAULT_LS_KEY, JSON.stringify(blob));
+    localStorage.removeItem(LS_KEY_CUR);
   });
   encQueue = encQueue.then(async () => {
     try { await attempt(); return; } catch (e) { }
@@ -90,7 +142,7 @@ function updateSaveStamp() {
 function load() {
   Vault.pendingBlob = Vault.localBlob();
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = localStorage.getItem(LS_KEY_CUR);
     /* s'il existe un blob chiffré, il est plus récent que l'éventuelle copie
        en clair héritée : on n'hydrate pas cette dernière (elle sera effacée
        au premier save()) */
@@ -111,7 +163,10 @@ function normalizeState() {
   if (!state.notes) state.notes = {};
   if (!state.ui) state.ui = { theme: "dark", font: 0 };
   applyUi();
-  if (state.password == null) state.password = "0612"; // verrou par défaut (modifiable en Réglages, vide = pas de verrou)
+  /* l'ancien verrou par défaut « 0612 » est supprimé : plus de verrou app
+     (le chiffrement du coffre, lui, reste exigeant) */
+  if (state.password === "0612") state.password = null;
+  if (state.password === "") state.password = null;
   if (!state.extra) state.extra = [];
   if (!state.runs) state.runs = [];
   if (!state.shoes) state.shoes = [];
@@ -138,6 +193,7 @@ function normalizeState() {
   state.convs = state.convs.filter(c => c && typeof c === "object").sort((x, y) => x.id - y.id);
   if (!state.convs.some(c => c.id === state.convId))
     state.convId = state.convs.length ? state.convs[state.convs.length - 1].id : null;
+  if (state.welcomed == null) state.welcomed = false;
 }
 /* normalise une liste de messages : objets, id (négatifs pour les anciens,
    ordre conservé), ts. Utilisé par normalizeState et la fusion. */
@@ -167,18 +223,18 @@ function fmtDur(sec) {
   return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
 }
 function fmtHours(min) { return (Math.round((min / 60) * 10) / 10).toLocaleString("fr-FR"); }
-function raceDay() { return parseDate(RACE.date); }
+function raceDay() { return RACE ? parseDate(RACE.date) : null; }
 function currentWeek() {
   const days = Math.floor((Date.now() - parseDate(state.start).getTime()) / 864e5);
   if (days < 0) return 1;
-  return Math.min(29, Math.floor(days / 7) + 1);
+  return Math.min(WEEKS.length, Math.floor(days / 7) + 1);
 }
 function todayIdx() { return (new Date().getDay() + 6) % 7; } // 0 = lundi
 function weekOfDate(iso) {
   const d = parseDate(iso), start = parseDate(state.start);
   const days = Math.floor((d - start) / 864e5);
   if (days < 0) return 1;
-  return Math.min(29, Math.floor(days / 7) + 1);
+  return Math.min(WEEKS.length, Math.floor(days / 7) + 1);
 }
 function dayIndexOfDate(iso) { const d = parseDate(iso); return (d.getDay() + 6) % 7; }
 function blockOf(w) { return BLOCKS.find(b => w >= b.weeks[0] && w <= b.weeks[1]); }
@@ -420,9 +476,9 @@ function totalRealizedMin() { let s = 0; for (let n = 1; n <= WEEKS.length; n++)
 const NAV = {
   today: { label: "Accueil", subs: [["today", "Aujourd'hui"]] },
   sessions: { label: "Sessions", subs: [["new", "Nouveau"], ["sessions", "Séances"], ["traces", "Traces"], ["stats", "Résumé"]] },
-  "program-group": { label: "Programme", subs: [["summary", "Résumé"], ["semaine", "Semaine"], ["program", "Plan 29 semaines"], ["progress", "Progression"]] },
+  "program-group": { label: "Programme", subs: [["summary", "Résumé"], ["semaine", "Semaine"], ["program", "Plan " + WEEKS.length + " semaines"], ["progress", "Progression"]] },
   aide: { label: "Aide", subs: [["food", "Nutrition"], ["recipes", "Recettes"], ["exercises", "Exercices"], ["conseil", "Conseils"], ["coach", "Coach IA"]] },
-  params: { label: "Paramètres", subs: [["shoes", "Chaussures"], ["settings", "Réglages"]] }
+  params: { label: "Paramètres", subs: [["compte", "Compte"], ["shoes", "Chaussures"], ["settings", "Réglages"]] }
 };
 const VIEW_GROUP = {};
 Object.keys(NAV).forEach(g => NAV[g].subs.forEach(s => { VIEW_GROUP[s[0]] = g; }));
@@ -475,6 +531,7 @@ function renderView(name) {
   else if (name === "progress") renderProgress();
   else if (name === "conseil") renderConseil();
   else if (name === "coach") renderCoach();
+  else if (name === "compte") renderCompte();
   else if (name === "settings") renderSettings();
   updateHeader();
 }
@@ -690,11 +747,16 @@ function renderConseil() {
 /* ================= vue : programme — résumé ================= */
 function renderSummary() {
   const w = currentWeek(), blk = blockOf(w);
-  const j = Math.max(0, daysBetween(isoDate(new Date()), RACE.date));
+  const j = RACE ? Math.max(0, daysBetween(isoDate(new Date()), RACE.date)) : null;
+  const lightWeeks = WEEKS.filter(x => x.light).map(x => "S" + x.n).join(", ");
   let html = "<h2>Programme — résumé</h2>" +
-    '<div class="hero"><div><div class="hero-date">' + esc(RACE.name) + " — " + RACE.dist + " km · " + RACE.dplus + " m D+</div>" +
-    "<h2>J−" + j + " · Semaine " + w + " — " + esc(blk.name) + "</h2>" +
-    '<div class="muted">' + esc(RACE.date + " · " + RACE.city) + " · 29 semaines · 5 blocs · " + esc(RACE.note) + "</div></div>" +
+    (RACE
+      ? '<div class="hero"><div><div class="hero-date">' + esc(RACE.name) + " — " + RACE.dist + " km · " + RACE.dplus + " m D+</div>" +
+        "<h2>J−" + j + " · Semaine " + w + " — " + esc(blk.name) + "</h2>" +
+        '<div class="muted">' + esc(RACE.date + " · " + RACE.city) + " · " + WEEKS.length + " semaines · " + BLOCKS.length + " blocs · " + esc(RACE.note) + "</div></div>"
+      : '<div class="hero"><div><div class="hero-date">' + esc(CUR_PLAN.label) + "</div>" +
+        "<h2>Semaine " + w + " — " + esc(blk.name) + "</h2>" +
+        '<div class="muted">' + WEEKS.length + " semaines · " + BLOCKS.length + " blocs · pas de course visée pour l'instant</div></div>") +
     '<div class="hero-weekbar">' + weekBar(w) + "</div></div>";
   /* avance globale */
   const plan = totalPlannedMin(), done = totalRealizedMin();
@@ -707,7 +769,7 @@ function renderSummary() {
     '<div class="stat"><span>' + state.runs.length + '</span><label>sorties</label></div>' +
     "</div>";
   /* les 5 blocs */
-  html += "<h3>Les 5 blocs du plan</h3><div class='day-card'>";
+  html += "<h3>Les " + BLOCKS.length + " blocs du plan</h3><div class='day-card'>";
   BLOCKS.forEach(b => {
     const weeks = WEEKS.filter(wk => blockOf(wk.n).name === b.name);
     if (!weeks.length) return;
@@ -724,7 +786,8 @@ function renderSummary() {
       "</div></div>";
   });
   html += "</div>";
-  html += '<div class="note">' + esc("Progression 3+1 : les semaines allégées sont S4, S8, S12, S16, S20, S24 — on ne les charge jamais. Affûtage S26-S29 (affûtage rapide de Koop) : jamais de charge non plus.") + "</div>";
+  html += '<div class="note">' + esc("Progression 3+1 : les semaines allégées sont " + lightWeeks + " — on ne les charge jamais." +
+    (RACE ? " Affûtage S26-S29 (affûtage rapide de Koop) : jamais de charge non plus." : "")) + "</div>";
   $("#view-summary").innerHTML = html;
 }
 
@@ -775,9 +838,22 @@ function renderRecipes() {
 function updateHeader() {
   const w = currentWeek();
   $("#hdr-week").textContent = "S" + w + (blockOf(w) ? " · " + blockOf(w).name : "");
-  const j = Math.max(0, daysBetween(isoDate(new Date()), RACE.date));
-  $("#hdr-j").textContent = j;
+  const j = RACE ? Math.max(0, daysBetween(isoDate(new Date()), RACE.date)) : null;
+  $("#hdr-j").textContent = j != null ? j : "—";
+  const jl = $("#hdr-j-label");
+  if (jl) jl.textContent = RACE ? "Jours avant course" : "Semaines du plan";
+  if (!RACE) $("#hdr-j").textContent = "S" + w + "/" + WEEKS.length;
   $("#hdr-done").textContent = weekProgressPct() + "%";
+  /* marque + libellé du programme de la session active */
+  const bs = $("#brand-sub");
+  if (bs) bs.textContent = CUR_SESS().name + " — " + CUR_PLAN.label;
+  const fp = $("#foot-plan");
+  if (fp) {
+    const end = weekDates(WEEKS.length)[6];
+    fp.textContent = "Programme " + fmtDateShort(parseDate(state.start)) + " → " + fmtDateShort(end) +
+      (RACE ? " · " + RACE.name + " " + RACE.dist + " km le " + RACE.date : "") +
+      " · Données synchronisées avec le serveur centralisé quand il est joignable.";
+  }
 }
 
 /* ================= cases à cocher de séances ================= */
@@ -1045,13 +1121,13 @@ function renderToday() {
   const today = dates[idx];
   const items = week.days[idx]; // entrées { it, w, d, i, moved } (places réelles)
   const wDone = realizedMinutes(w), wPlan = plannedMinutes(w), wExtra = extraMinutes(w), wRun = runMinutes(w);
-  const j = daysBetween(isoDate(today), RACE.date);
+  const j = RACE ? daysBetween(isoDate(today), RACE.date) : null;
   const runsToday = items.filter(x => RUN_CODES.includes(x.it.c));
 
   let html = '<div class="hero">' +
     '<div><div class="hero-date">' + fmtDate(today) + "</div>" +
     '<h2>Semaine ' + w + " — " + esc(blockOf(w).name) + (week.light ? ' <span class="badge light">allégée</span>' : "") + (isPrepWeek(w) ? ' <span class="badge prep">course prép.</span>' : "") + "</h2>" +
-    '<div class="muted">Du ' + fmtDateShort(dates[0]) + " au " + fmtDateShort(dates[6]) + " · " + (j >= 0 ? "J−" + j + " avant la course" : "course passée") + "</div></div>" +
+    '<div class="muted">Du ' + fmtDateShort(dates[0]) + " au " + fmtDateShort(dates[6]) + " · " + (j != null ? (j >= 0 ? "J−" + j + " avant la course" : "course passée") : "pas de course visée") + "</div></div>" +
     '<div class="hero-weekbar">' + weekBar(w) + "</div></div>";
 
   const recHTML = polarRecoveryHTML();
@@ -1190,7 +1266,7 @@ function renderProgram() {
     renderProgram();
   }));
   $("#wprev").addEventListener("click", () => { state.lastWeekView = Math.max(1, cur - 1); save(); renderProgram(); });
-  $("#wnext").addEventListener("click", () => { state.lastWeekView = Math.min(29, cur + 1); save(); renderProgram(); });
+  $("#wnext").addEventListener("click", () => { state.lastWeekView = Math.min(WEEKS.length, cur + 1); save(); renderProgram(); });
   $("#wback").addEventListener("click", () => { state.lastWeekView = currentWeek(); save(); renderProgram(); });
 }
 
@@ -1708,6 +1784,159 @@ let sessionFilter = "tout";  // filtre par type de la liste des séances
 /* codes de séance créables à la main : course + renforcement + autres */
 const SESSION_CODES = RUN_CODES.concat(["RMA", "RMB", "RMC", "GAING", "CORDE", "PROP", "MAS", "NAT", "YOGA", "V"]);
 
+/* ---- import CSV Polar Flow (export manuel depuis flow.polar.com) ----
+   Format : ligne 1 = en-têtes du résumé, ligne 2 = valeurs du résumé,
+   puis ligne « Sample rate,Time,HR (bpm),… » et les échantillons 1 s. */
+function parsePolarCsv(text) {
+  const lines = String(text).split(/\r?\n/).filter(l => l.trim() !== "");
+  if (lines.length < 2) throw new Error("CSV vide");
+  const head = lines[0].split(",");
+  const sum = lines[1].split(",");
+  const get = name => { const i = head.indexOf(name); return i >= 0 ? (sum[i] || "").trim() : ""; };
+  const sport = get("Sport"), date = get("Date"), start = get("Start time");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("pas de date valide");
+  const d = (get("Duration") || "0:0:0").split(":");
+  const dur = (+d[0] || 0) * 60 + (+d[1] || 0) + Math.round((+d[2] || 0) / 60);
+  const dist = parseFloat(get("Total distance (km)")) || 0;
+  const ascent = parseFloat(get("Ascent (m)")) || 0;
+  let hrSum = 0, hrN = 0, hrMax = 0;
+  const sh = lines.findIndex(l => /^Sample rate,/i.test(l));
+  if (sh >= 0) {
+    const cols = lines[sh].split(",");
+    const hrI = cols.findIndex(c => /HR/i.test(c));
+    for (let i = sh + 1; i < lines.length; i++) {
+      const hr = parseFloat(lines[i].split(",")[hrI]);
+      if (hr > 0) { hrSum += hr; hrN++; if (hr > hrMax) hrMax = hr; }
+    }
+  }
+  const hrAvgHead = parseFloat(get("Average heart rate (bpm)"));
+  return {
+    sport, date, start, dur,
+    dist: Math.round(dist * 100) / 100,
+    dplus: Math.round(ascent),
+    hrAvg: hrAvgHead > 0 ? Math.round(hrAvgHead) : (hrN ? Math.round(hrSum / hrN) : null),
+    hrMax: hrMax || null,
+    calories: parseFloat(get("Calories")) || null,
+    ri: parseFloat(get("Running index")) || null,
+    load: parseFloat(get("Training load")) || null
+  };
+}
+/* importe une liste de fichiers .csv (Polar Flow) et .gpx, fusionnés :
+   chaque CSV crée (ou met à jour) une séance — polarId csv:<date>T<heure>,
+   km/durée/D+/FC depuis le résumé et les échantillons ; chaque GPX est
+   rattaché à la séance du même jour (même heure de départ, sinon 1re séance
+   du jour) et y apporte sa trace (distance/durée/D+ recalculées au GPS) */
+async function importFilesMerged(files) {
+  const csvs = [], gpxs = [];
+  for (const f of files) {
+    const n = (f.name || "").toLowerCase();
+    if (n.endsWith(".csv")) csvs.push(f);
+    else if (n.endsWith(".gpx")) gpxs.push(f);
+    else toast("Ignoré (ni .csv ni .gpx) : " + f.name);
+  }
+  let added = 0, merged = 0, updated = 0;
+  /* 1) CSV */
+  for (const f of csvs) {
+    try {
+      const s = parsePolarCsv(await f.text());
+      const pid = "csv:" + s.date + "T" + String(s.start || "").replace(/:/g, "");
+      const pe = plannedRunEntry(s.date);
+      const fields = {
+        date: s.date, code: polarCode(s.sport, s.sport),
+        dist: s.dist, dur: s.dur, dplus: s.dplus,
+        polarId: pid,
+        polar: {
+          sport: s.sport, detailed: s.sport,
+          hr: s.hrAvg ? { average: s.hrAvg, maximum: s.hrMax } : null,
+          ri: s.ri, calories: s.calories, cardioLoad: s.load
+        },
+        planned: pe ? pe.it.t : null,
+        planKey: pe ? (pe.isCustom ? customKey(pe.custom.id) : itemKey(pe.w, pe.d, pe.i)) : null
+      };
+      let run = state.runs.find(r => r.polarId === pid);
+      if (run) { Object.assign(run, fields); updated++; }
+      else {
+        /* même sortie déjà importée via Polar (polarId hashé) : signature date + durée + distance */
+        const same = state.runs.find(r => r.polarId && r.polarId.indexOf("csv:") !== 0 && r.date === s.date &&
+          Math.abs((r.dur || 0) - s.dur) <= 2 && Math.abs((r.dist || 0) - s.dist) < 0.3);
+        if (same) { const keepPid = same.polarId; Object.assign(same, fields); same.polarId = keepPid; run = same; updated++; }
+        else {
+          run = Object.assign({
+            id: state.seq++, feel: null, knee: null, ankle: null,
+            notes: "Import CSV Polar Flow : " + f.name,
+            shoeId: null, route: null, points: null, trackRef: null
+          }, fields);
+          state.runs.push(run); added++;
+        }
+      }
+      /* comme l'import Polar : une course de +10 min reliée à la séance prévue coche le programme */
+      if (run.planKey && !state.done[run.planKey] && run.code === "CAP" && (run.dur || 0) >= 10)
+        state.done[run.planKey] = true;
+    } catch (e) { toast("CSV illisible (" + f.name + ") : " + e.message); }
+  }
+  /* 2) GPX : rattachés à la séance du même jour */
+  const attachPoints = (run, pts) => {
+    run.points = Geo.compact(pts, 800);
+    if (run.points && run.points.length > 40 && ServerSync.tracks) {
+      run.trackRef = run.id; ServerSync.putTrack(run.id, run.points); run.points = null;
+    }
+  };
+  for (const f of gpxs) {
+    try {
+      const pts = Geo.parseGpx(await f.text());
+      const s = Geo.stats(pts);
+      const p0 = pts.find(p => p.t != null);
+      const d0 = p0 ? new Date(p0.t) : new Date();
+      const date = isoDate(d0);
+      const hhmmss = [d0.getHours(), d0.getMinutes(), d0.getSeconds()].map(x => String(x).padStart(2, "0")).join("");
+      /* cible : polarId csv:<date>T<heure>, sinon 1re course du jour, sinon 1re séance du jour
+         (on essaie aussi J-1 / J+1 : l'heure GPX est en UTC, le CSV en local) */
+      const candDates = [date];
+      const dp = parseDate(date); dp.setDate(dp.getDate() - 1); candDates.push(isoDate(dp));
+      dp.setDate(dp.getDate() + 2); candDates.push(isoDate(dp));
+      let run = null;
+      for (const cd of candDates) {
+        run = state.runs.find(r => r.polarId === "csv:" + cd + "T" + hhmmss);
+        if (run) break;
+        const dayRuns = state.runs.filter(r => r.date === cd);
+        run = dayRuns.find(r => RUN_CODES.includes(r.code) || r.code === "V") || dayRuns[0] || null;
+        if (run) break;
+      }
+      if (run) {
+        /* le résumé CSV (distance/durée/D+ barométrique Polar) est prioritaire :
+           le GPX ne remplit que ce qui manque et aporte la trace */
+        if (!run.dist) run.dist = Math.round(s.dist * 100) / 100;
+        if (!run.dur) run.dur = Math.round(s.dur / 60);
+        if (!run.dplus) run.dplus = s.dplus;
+        run.notes = (run.notes ? run.notes + " · " : "") + "Trace GPX : " + f.name;
+        attachPoints(run, pts);
+        merged++;
+      } else {
+        const pe = plannedRunEntry(date);
+        run = {
+          id: state.seq++, date, code: "AUTRE",
+          dist: Math.round(s.dist * 100) / 100, dur: Math.round(s.dur / 60), dplus: s.dplus,
+          feel: null, knee: null, ankle: null, notes: "Import GPX : " + f.name,
+          shoeId: null, route: null, points: null, trackRef: null, polarId: null, polar: null,
+          planned: pe ? pe.it.t : null,
+          planKey: pe ? (pe.isCustom ? customKey(pe.custom.id) : itemKey(pe.w, pe.d, pe.i)) : null
+        };
+        attachPoints(run, pts);
+        state.runs.push(run); added++;
+        if (run.planKey && !state.done[run.planKey] && run.code === "CAP" && (run.dur || 0) >= 10)
+          state.done[run.planKey] = true;
+      }
+    } catch (e) { toast("GPX illisible (" + f.name + ") : " + e.message); }
+  }
+  if (added || merged || updated) save();
+  const parts = [];
+  if (added) parts.push(added + " séance(s) créée(s)");
+  if (merged) parts.push(merged + " trace(s) GPX fusionnée(s)");
+  if (updated) parts.push(updated + " séance(s) mise(s) à jour");
+  toast(parts.length ? parts.join(", ") + "." : "Rien à importer.");
+  showView("sessions");
+}
+
 /* ---- Nouveau : créer une séance (course, renforcement, vélo…) ---- */
 function renderNew() {
   const w = currentWeek(), idx = todayIdx(), week = effWeek(w);
@@ -1751,8 +1980,14 @@ function renderNew() {
     '<div class="muted small" style="margin-top:-6px">La séance se déroule exercice par exercice, puis est cochée dans le programme (premier créneau libre de la semaine).</div>';
 
   /* formulaire manuel : tout type de séance */
-  html += '<div class="row-actions">' +
-    '<label class="btn file-btn">Importer un GPX <input type="file" id="rf-gpx" accept=".gpx" multiple></label></div>';
+  if (CUR_SLUG === "") {
+    /* import Polar/CSV/GPX : réservé au compte principal (Roi Burgonde) */
+    html += '<div class="row-actions">' +
+      '<label class="btn file-btn">Importer des fichiers .csv / .gpx <input type="file" id="rf-import" accept=".csv,.CSV,.gpx,.GPX,text/csv,application/gpx+xml" multiple></label></div>' +
+      '<div class="muted small" style="margin-top:-6px">Import multiple : les CSV Polar Flow et les GPX de la même sortie sont <b>fusionnés en une seule séance</b> (même jour) — le CSV apporte km/durée/D+/FC, le GPX la trace GPS.</div>';
+  } else {
+    html += '<div class="muted small">L\'import de données Polar (CSV/GPX) et la montre Polar sont réservés au compte <b>Roi Burgonde</b>.</div>';
+  }
   html += '<div class="run-form" id="rf-box">' +
     '<h3>Séance manuelle</h3>' +
     '<div class="form-grid">' +
@@ -2354,7 +2589,9 @@ function hrChartSVG(r) {
     const gy = y(z[z.length - 1].hi);
     gridSvg += '<line x1="0" x2="' + W + '" y1="' + gy + '" y2="' + gy + '" stroke="rgba(255,255,255,0.10)" stroke-width="1"/>';
   }
-  const pts = hr.map((v, i) => (i / (hr.length - 1) * W).toFixed(1) + "," + y(v).toFixed(1)).join(" ");
+  const pts = hr.map((v, i) => [i / (hr.length - 1) * W, y(v)]);
+  const dHr = smoothPath(pts);
+  const areaHr = dHr ? dHr + " L" + W + "," + H + " L0," + H + " Z" : "";
   /* étiquettes d'échelle : limites de zones (HTML, non déformé par le SVG) */
   let yLbl = "";
   if (z) {
@@ -2366,7 +2603,11 @@ function hrChartSVG(r) {
   return '<div class="plot mini">' +
     '<div class="plot-y">' + yLbl + "</div>" +
     '<svg class="plot-svg" viewBox="0 0 ' + W + " " + H + '" preserveAspectRatio="none" role="img" aria-label="Courbe de fréquence cardiaque">' +
-    bands + gridSvg + '<polyline points="' + pts + '" fill="none" stroke="#ff7d6e" stroke-width="1.5"/>' +
+    '<defs><linearGradient id="grad-hr-mini" x1="0" y1="0" x2="0" y2="' + H + '" gradientUnits="userSpaceOnUse">' +
+    '<stop offset="0" stop-color="#ff7d6e" stop-opacity="0.32"/><stop offset="1" stop-color="#ff7d6e" stop-opacity="0.02"/></linearGradient></defs>' +
+    bands + gridSvg +
+    (areaHr ? '<path d="' + areaHr + '" fill="url(#grad-hr-mini)" stroke="none"/>' : "") +
+    '<path d="' + dHr + '" fill="none" stroke="#ff7d6e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
     "</svg></div>";
 }
 
@@ -2419,6 +2660,20 @@ function chartYVal(lo, hi, invert, v) {
     ? PLOT_PAD + (v - lo) / Math.max(1e-9, hi - lo) * (PLOT_H - 2 * PLOT_PAD)
     : PLOT_H - PLOT_PAD - (v - lo) / Math.max(1e-9, hi - lo) * (PLOT_H - 2 * PLOT_PAD);
 }
+/* lissage d'une courbe (Catmull-Rom -> segments de Bézier), comme Strava/Garmin :
+   pts = [[x,y],...] ; renvoie l'attribut d d'un <path> */
+function smoothPath(pts) {
+  if (!pts.length) return "";
+  if (pts.length < 3) return "M" + pts.map(p => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" L");
+  let d = "M" + pts[0][0].toFixed(1) + "," + pts[0][1].toFixed(1);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += " C" + c1x.toFixed(1) + "," + c1y.toFixed(1) + " " + c2x.toFixed(1) + "," + c2y.toFixed(1) + " " + p2[0].toFixed(1) + "," + p2[1].toFixed(1);
+  }
+  return d;
+}
 /* lignes de grille + étiquettes d'une colonne d'échelle */
 function chartScaleCol(lo, hi, invert, gridVals, decimals) {
   const y = v => chartYVal(lo, hi, invert, v);
@@ -2457,13 +2712,17 @@ function chartHTML(ch) {
       return '<rect x="0" y="' + top.toFixed(1) + '" width="' + PLOT_W + '" height="' + (bot - top).toFixed(1) + '" fill="' + HR_ZONE_COLORS[i] + '" opacity="0.13"/>';
     }).join("");
   }
-  /* courbes : la fenêtre [i0, i1] occupe toute la largeur */
-  const line = (series, lo2, hi2, invert) => series.slice(i0, i1 + 1).map((v, k) => {
+  /* courbes : la fenêtre [i0, i1] occupe toute la largeur ; tracés lissés (Bézier)
+     avec aire en dégradé sous la courbe principale, comme Strava/Garmin Connect */
+  const ptsOf = (series, lo2, hi2, invert) => series.slice(i0, i1 + 1).map((v, k) => {
     if (v == null || !isFinite(v)) return null;
-    return (k / Math.max(1, i1 - i0) * PLOT_W).toFixed(1) + "," + chartYVal(lo2, hi2, invert, v).toFixed(1);
-  }).filter(Boolean).join(" ");
-  const line1 = line(def.series, lo, hi, def.invert);
-  const line2 = ov ? line(ov.def.series, ov.lo, ov.hi, ov.def.invert) : "";
+    return [k / Math.max(1, i1 - i0) * PLOT_W, chartYVal(lo2, hi2, invert, v)];
+  }).filter(Boolean);
+  const pts1 = ptsOf(def.series, lo, hi, def.invert);
+  const pts2 = ov ? ptsOf(ov.def.series, ov.lo, ov.hi, ov.def.invert) : null;
+  const path1 = smoothPath(pts1);
+  const path2 = pts2 ? smoothPath(pts2) : "";
+  const area1 = path1 ? path1 + " L" + PLOT_W + "," + PLOT_H + " L0," + PLOT_H + " Z" : "";
   /* graduations X sur la fenêtre + légende des axes */
   const n = def.series.length;
   const tAt = f => fmtAxisTime(Math.round((def.durSec || 0) * (i0 + f * (i1 - i0)) / Math.max(1, n - 1)));
@@ -2480,9 +2739,13 @@ function chartHTML(ch) {
   const ycol2 = ov ? '<div class="plot-y ' + (primLeft ? "yr" : "yl") + '" style="color:' + ov.def.color + '">' + ov.col.lbl + "</div>" : "";
   html += (primLeft ? ycol1 + ycol2 : ycol2 + ycol1);
   html += '<svg class="plot-svg" viewBox="0 0 ' + PLOT_W + " " + PLOT_H + '" preserveAspectRatio="none">' +
+    '<defs><linearGradient id="grad-' + def.key + '" x1="0" y1="0" x2="0" y2="' + PLOT_H + '" gradientUnits="userSpaceOnUse">' +
+    '<stop offset="0" stop-color="' + def.color + '" stop-opacity="0.32"/>' +
+    '<stop offset="1" stop-color="' + def.color + '" stop-opacity="0.02"/></linearGradient></defs>' +
     bands + prim.svg +
-    '<polyline points="' + line1 + '" fill="none" stroke="' + def.color + '" stroke-width="1.5"/>' +
-    (line2 ? '<polyline points="' + line2 + '" fill="none" stroke="' + ov.def.color + '" stroke-width="1.5"/>' : "") +
+    (area1 ? '<path d="' + area1 + '" fill="url(#grad-' + def.key + ')" stroke="none"/>' : "") +
+    '<path d="' + path1 + '" fill="none" stroke="' + def.color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+    (path2 ? '<path d="' + path2 + '" fill="none" stroke="' + ov.def.color + '" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="1 0"/>' : "") +
     '<line class="plot-xline" x1="0" x2="0" y1="0" y2="' + PLOT_H + '" stroke="#fff" stroke-width="1" stroke-dasharray="3 3" style="display:none"/>' +
     '<circle class="plot-dot" r="3.5" fill="#fff" stroke="' + def.color + '" stroke-width="2" style="display:none"/>' +
     (ov ? '<circle class="plot-dot2" r="3.5" fill="#fff" stroke="' + ov.def.color + '" stroke-width="2" style="display:none"/>' : "") +
@@ -2521,6 +2784,7 @@ function renderChart(ch, container) {
   tmp.innerHTML = chartHTML(ch);
   box.replaceWith(tmp.firstChild);
   bindChartControls(ch, container);
+  bindChartCrosshair(ch, container); /* le nouveau <svg> doit être rebindé */
 }
 /* réticule synchronisé : la fraction (0..1) s'applique à tous les tracés */
 function setDetailCrosshair(container, frac) {
@@ -2548,13 +2812,24 @@ function setDetailCrosshair(container, frac) {
     if (read) { read.textContent = txt; read.classList.remove("hidden"); }
   });
 }
-/* events pointeur d'un tracé : appui/glisser → réticule sur tous les tracés */
+/* events pointeur d'un tracé : réticule synchronisé sur tous les tracés.
+   Comportement type Strava/Garmin Connect :
+   - souris : le réticule suit le curseur dès le survol (pas besoin de cliquer),
+     et disparaît quand la souris quitte le tracé ;
+   - tactile : appui/glisser déplace le réticule, qui RESTE épinglé après le
+     relâchement (pointerleave ne le masque pas) jusqu'à un appui hors du tracé. */
 function bindChartCrosshair(ch, container) {
-  const box = (container || document).querySelector('.plot[data-pid="' + ch.def.key + '"]');
+  const root = container || document;
+  const box = root.querySelector('.plot[data-pid="' + ch.def.key + '"]');
   if (!box) return;
   const svg = box.querySelector("svg");
   if (!svg || svg.dataset.bound) return;
   svg.dataset.bound = "1";
+  let pinned = false;
+  const hideAll = () => {
+    root.querySelectorAll(".plot-xline, .plot-dot, .plot-dot2").forEach(el => { el.style.display = "none"; });
+    root.querySelectorAll(".plot-read").forEach(el => { el.classList.add("hidden"); });
+  };
   const fracOf = e => {
     const r = svg.getBoundingClientRect();
     if (!r.width && !r.height) return null;
@@ -2564,13 +2839,27 @@ function bindChartCrosshair(ch, container) {
       ? Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
       : Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
   };
-  const move = e => { const f = fracOf(e); if (f != null) setDetailCrosshair(container, f); };
-  svg.addEventListener("pointerdown", move);
-  svg.addEventListener("pointermove", e => { if (e.buttons || e.pointerType === "touch") move(e); });
-  svg.addEventListener("pointerleave", () => {
-    (container || document).querySelectorAll(".plot-xline, .plot-dot, .plot-dot2").forEach(el => { el.style.display = "none"; });
-    (container || document).querySelectorAll(".plot-read").forEach(el => { el.classList.add("hidden"); });
+  const move = e => { const f = fracOf(e); if (f != null) setDetailCrosshair(root, f); };
+  svg.addEventListener("pointerdown", e => {
+    pinned = e.pointerType !== "mouse"; /* tactile : on épingle au toucher */
+    move(e);
+    try { svg.setPointerCapture(e.pointerId); } catch (err) { }
   });
+  svg.addEventListener("pointermove", e => {
+    /* souris : simple survol (buttons à 0) suffit ; tactile/stylet : appui en cours */
+    if (e.pointerType === "mouse" || e.buttons || e.pointerType !== "mouse") move(e);
+  });
+  svg.addEventListener("pointerup", () => { /* le réticule reste visible si épinglé */ });
+  svg.addEventListener("pointerleave", e => {
+    if (e.pointerType === "mouse" || !pinned) hideAll();
+  });
+  /* un appui hors de ce tracé désépingle et masque le réticule (une fois par conteneur) */
+  if (!root.dataset.xhairDoc) {
+    root.dataset.xhairDoc = "1";
+    root.addEventListener("pointerdown", e => {
+      if (!e.target.closest || !e.target.closest(".plot-svg")) { pinned = false; hideAll(); }
+    }, true);
+  }
 }
 function bindDetailPlots() {
   detailCharts.forEach(ch => { bindChartCrosshair(ch, $("#detail-body")); bindChartControls(ch, $("#detail-body")); });
@@ -2696,27 +2985,12 @@ function bindNewEvents() {
     const ty = TYPES[b.dataset.openTimer];
     if (ty.timer) openTimer("Séance " + ty.label, ty.timer, { noLog: true });
   }));
-  /* import GPX */
-  const gpxInput = $("#rf-gpx");
-  if (gpxInput) gpxInput.addEventListener("change", async () => {
-    const files = Array.from(gpxInput.files || []);
-    gpxInput.value = "";
-    for (const f of files) {
-      try {
-        const pts = Geo.parseGpx(await f.text());
-        const s = Geo.stats(pts);
-        const run = {
-          id: state.seq++, date: isoDate(new Date()), code: "AUTRE",
-          dist: Math.round(s.dist * 100) / 100, dur: Math.round(s.dur / 60),
-          dplus: s.dplus, feel: null, knee: null, ankle: null, notes: "Import GPX : " + f.name,
-          shoeId: null, points: Geo.compact(pts, 800), planned: null,
-          planKey: (function (pe) { return pe ? itemKey(pe.w, pe.d, pe.i) : null; })(plannedRunEntry(isoDate(new Date())))
-        };
-        state.runs.push(run); save();
-        toast("GPX importé : " + s.dist.toFixed(1) + " km, " + s.dplus + " m D+.");
-      } catch (err) { toast("Erreur GPX : " + err.message); }
-    }
-    showView("sessions");
+  /* import multi-fichiers .csv / .gpx (fusion par date) */
+  const impInput = $("#rf-import");
+  if (impInput) impInput.addEventListener("change", async () => {
+    const files = Array.from(impInput.files || []);
+    impInput.value = "";
+    await importFilesMerged(files);
   });
 }
 
@@ -3139,7 +3413,7 @@ function renderProgress() {
   const totalItems = WEEKS.reduce((a, w) => a + allItems(w.n).length, 0);
   const doneItems = Object.keys(state.done).length;
   const planMin = totalPlannedMin(), doneMin = totalRealizedMin();
-  const totDays = Math.max(1, daysBetween(state.start, RACE.date));
+  const totDays = Math.max(1, daysBetween(state.start, RACE ? RACE.date : isoDate(new Date())));
   const elDays = Math.max(0, Math.min(totDays, daysBetween(state.start, isoDate(new Date()))));
   const km = state.runs.reduce((a, r) => a + (r.dist || 0), 0);
   const dplus = state.runs.reduce((a, r) => a + (r.dplus || 0), 0);
@@ -3147,15 +3421,16 @@ function renderProgress() {
   let html = "<h2>Progression</h2>";
 
   html += '<div class="stat-cards big-cards">' +
-    '<div class="stat"><span>' + Math.round(100 * elDays / totDays) + ' %</span><label>temps écoulé (J' + (elDays - totDays <= 0 ? "−" + (totDays - elDays) : "+" + (elDays - totDays)) + ")</label></div>" +
+    '<div class="stat"><span>' + Math.round(100 * elDays / totDays) + ' %</span><label>temps écoulé' + (RACE ? " (J" + (elDays - totDays <= 0 ? "−" + (totDays - elDays) : "+" + (elDays - totDays)) + ")" : " du plan") + "</label></div>" +
     '<div class="stat"><span>' + doneItems + " / " + totalItems + '</span><label>séances cochées</label></div>' +
     '<div class="stat"><span>' + fmtHours(doneMin) + " / " + fmtHours(planMin) + ' h</span><label>volume réalisé / planifié (temps réel des sorties' + (totalExtraMin() ? " + " + totalExtraMin() + " min hors programme" : "") + ")</label></div>" +
     '<div class="stat"><span>' + km.toFixed(0) + ' km</span><label>distance courue (sorties enregistrées)</label></div>' +
-    '<div class="stat"><span>' + dplus + " / " + RACE.dplus + ' m</span><label>D+ cumulé / D+ de la course</label></div>' +
+    '<div class="stat"><span>' + dplus + (RACE ? " / " + RACE.dplus : "") + ' m</span><label>D+ cumulé' + (RACE ? " / D+ de la course" : "") + "</label></div>" +
     "</div>";
 
-  html += '<div class="dplus-race"><div class="dplus-track"><div class="dplus-fill" style="width:' + Math.min(100, 100 * dplus / RACE.dplus) + '%"></div></div>' +
-    '<div class="muted small">' + Math.min(100, Math.round(100 * dplus / RACE.dplus)) + " % du dénivelé de la course, cumulé à l'entraînement</div></div>";
+  if (RACE)
+    html += '<div class="dplus-race"><div class="dplus-track"><div class="dplus-fill" style="width:' + Math.min(100, 100 * dplus / RACE.dplus) + '%"></div></div>' +
+      '<div class="muted small">' + Math.min(100, Math.round(100 * dplus / RACE.dplus)) + " % du dénivelé de la course, cumulé à l'entraînement</div></div>";
 
   /* graphique volume hebdo : planifié (barre claire) vs réalisé (barre pleine) */
   const maxVol = Math.max.apply(null, WEEKS.map(w => w.vol));
@@ -3603,13 +3878,15 @@ function renderSettings() {
   $("#view-settings").innerHTML =
     "<h2>Réglages</h2>" +
     '<div class="note" id="storage-note">' + storageNoteHTML() + "</div>" +
+    "<h3>Sessions (multi-comptes)</h3>" +
+    '<div class="muted small">Changer de compte, en créer ou en supprimer : sous-onglet <b>Compte</b> ci-dessus — aucun mot de passe demandé, le GIF du compte s\'affiche à l\'ouverture.</div>' +
     "<h3>Programme</h3>" +
     '<div class="form-grid">' +
     '<label>Début du programme (lundi S1) <input type="date" id="st-start" value="' + state.start + '"></label>' +
     "</div>" +
     "<h3>Verrouillage</h3>" +
     '<div class="form-grid">' +
-    '<label class="full">Mot de passe d\'accès <input type="text" id="st-pass" value="' + esc(state.password || "") + '" placeholder="vide = pas de verrou"></label>' +
+    '<label class="full">Mot de passe d\'accès <input type="password" id="st-pass" value="' + esc(state.password || "") + '" placeholder="vide = pas de verrou"></label>' +
     "</div>" +
     '<div class="muted small">Au chargement, l\'app demande ce mot de passe ; « Se souvenir sur cet appareil » l\'évite ensuite. ' +
     "Verrou simple contre les curieux — le chiffrement des données n'en dépend pas.</div>" +
@@ -3624,7 +3901,7 @@ function renderSettings() {
         "</div>" +
         '<div class="row-actions"><button class="btn" id="enc-change">Changer le mot de passe du coffre</button>' +
         '<button class="btn" id="enc-lock">Verrouiller maintenant</button></div>' +
-        '<div class="muted small">Le mot de passe est demandé à chaque chargement (les clés ne restent qu\'en mémoire). ' +
+        '<div class="muted small">Au déverrouillage, « Se souvenir sur cet appareil » garde les clés (jamais le mot de passe) ici : il ne sera demandé qu\'une fois par appareil, jusqu\'à « Verrouiller maintenant ». ' +
         "Perdu = données définitivement illisibles, sur tous les appareils — note-le ailleurs (carnet, gestionnaire de mots de passe).</div>"
       : '<div class="form-grid">' +
         '<label class="full">Mot de passe de chiffrement <input type="password" id="enc-pass" autocomplete="new-password" placeholder="8 caractères minimum, préfère une phrase longue"></label>' +
@@ -3684,8 +3961,9 @@ function renderSettings() {
     '<div class="muted small">Astuce : le lien de synchronisation s\'ouvre directement sur l\'autre appareil et propose la fusion automatique. ' +
     "Pour les sorties GPS et les chaussures, utilise plutôt l'export JSON complet ci-dessus (qui remplace tout).</div>";
 
+  bindEyes($("#view-settings")); // œil afficher/masquer sur chaque champ de mot de passe
   $("#st-save").addEventListener("click", () => {
-    state.start = $("#st-start").value || DEFAULT_START;
+    state.start = $("#st-start").value || CUR_PLAN.start || DEFAULT_START;
     state.password = $("#st-pass").value.trim() || null;
     const fcm = +$("#st-fcm").value, repos = +$("#st-resthr").value, poids = +$("#st-weight").value, vma = +$("#st-vma").value, vo2 = +$("#st-vo2").value;
     state.profile = (fcm || repos || poids || vma || vo2)
@@ -3742,6 +4020,7 @@ function renderSettings() {
       await Vault.create(p1); // nouveau sel + nouvelles clés
       const r = await registerVaultOnServer(oldKey); // l'ancienne clé autorise le remplacement
       save(); // re-scelle localStorage + pousse le blob chiffré avec la nouvelle clé
+      Vault.saveLocal(); // nouvelles clés mémorisées sur cet appareil
       toast(r.ok ? "Mot de passe du coffre changé — utilise-le sur tes autres appareils."
         : "Changé localement, mais le serveur a refusé la mise à jour (HTTP " + r.status + ") — réessaie ou vérifie le serveur.");
       renderSettings();
@@ -3754,6 +4033,7 @@ function renderSettings() {
   const encLock = $("#enc-lock");
   if (encLock) encLock.addEventListener("click", () => {
     save(); // rien à perdre au rechargement
+    Vault.forgetLocal(); // oublie les clés mémorisées : le mot de passe sera redemandé
     Vault.lock();
     location.reload(); // les clés n'existaient qu'en mémoire : tout disparaît
   });
@@ -3787,7 +4067,7 @@ function renderSettings() {
     const keepPass = state.password; // et le mot de passe
     const keepUi = state.ui; // et les préférences d'apparence de cet appareil
     const keepPolar = state.polar; // et l'état de la montre Polar (jeton réel côté serveur)
-    state = { start: DEFAULT_START, done: {}, moves: {}, hidden: {}, custom: [], extra: [], runs: [], shoes: [], lastShoeId: null, seq: 1, lastWeekView: null, mistral: keep, polar: keepPolar, password: keepPass, ui: keepUi, chat: [] };
+    state = { start: CUR_PLAN.start || DEFAULT_START, done: {}, moves: {}, hidden: {}, custom: [], extra: [], runs: [], shoes: [], lastShoeId: null, seq: 1, lastWeekView: null, mistral: keep, polar: keepPolar, password: keepPass, ui: keepUi, chat: [], welcomed: state.welcomed };
     save(); toast("Données effacées."); renderSettings(); updateHeader();
   });
 
@@ -3892,7 +4172,14 @@ function copyText(txt, msg) {
 /* ================= serveur de stockage (site dynamique) ================= */
 /* Si le site est servi par server/server.js, les données sont centralisées dans
    data/state.json : tous les appareils partagent le même état. Sans serveur
-   (fichier local ou GitHub Pages), tout retombe sur le localStorage du navigateur. */
+   (fichier local ou GitHub Pages), tout retombe sur le localStorage du navigateur.
+   Multi-sessions : chaque session a son propre emplacement (?user=<slug>). */
+function apiUrl(path, params) {
+  const q = new URLSearchParams(params || {});
+  if (CUR_SLUG) q.set("user", CUR_SLUG);
+  const s = q.toString();
+  return "api/" + path + (s ? "?" + s : "");
+}
 const ServerSync = {
   on: false,
   tracks: false,   // le serveur stocke-t-il les traces GPS séparément (R2) ?
@@ -3916,7 +4203,7 @@ const ServerSync = {
   /* trace GPS : chiffrée comme le reste (Vault.AAD_TRACK) avant l'envoi,
      déchiffrée à la réception ; les traces héritées en clair restent lisibles */
   async getTrack(id) {
-    const res = await fetch("api/track?id=" + id, { cache: "no-store", headers: Vault.headers() });
+    const res = await fetch(apiUrl("track", { id: id }), { cache: "no-store", headers: Vault.headers() });
     if (!res.ok) return null;
     let obj = null;
     try { obj = JSON.parse(await res.text()); } catch (e) { return null; }
@@ -3932,7 +4219,7 @@ const ServerSync = {
     try { body = JSON.stringify(Vault.ready ? await Vault.seal(points, Vault.AAD_TRACK) : points); }
     catch (e) { return; }
     try {
-      await fetch("api/track?id=" + id, {
+      await fetch(apiUrl("track", { id: id }), {
         method: "PUT",
         headers: Object.assign({ "Content-Type": "application/json" }, Vault.headers()),
         body: body
@@ -3941,7 +4228,13 @@ const ServerSync = {
   },
   delTrack(id) {
     if (!this.on) return;
-    fetch("api/track?id=" + id, { method: "DELETE", headers: Vault.headers() }).catch(() => { });
+    fetch(apiUrl("track", { id: id }), { method: "DELETE", headers: Vault.headers() }).catch(() => { });
+  },
+  /* supprime un compte côté serveur (état + traces) — suppression de compte */
+  async delSession(slug) {
+    if (!this.on) return;
+    const q = slug ? "?user=" + encodeURIComponent(slug) : "";
+    fetch("api/state" + q, { method: "DELETE", headers: Vault.headers() }).catch(() => { });
   },
 
   async init() {
@@ -3977,7 +4270,7 @@ const ServerSync = {
   async pull(adopt) {
     if (!this.on || this.blocked) return;
     try {
-      const res = await fetch("api/state", { cache: "no-store", headers: Vault.headers() });
+      const res = await fetch(apiUrl("state"), { cache: "no-store", headers: Vault.headers() });
       if (!res.ok) return;
       const data = await res.json();
       let remote = data && data.state;
@@ -4020,17 +4313,28 @@ const ServerSync = {
           ? JSON.stringify(Object.assign(await Vault.seal(payload, Vault.AAD_STATE), { updatedAt: payload.updatedAt || 0 }))
           : JSON.stringify(payload);
       } catch (e) { return; }
-      fetch("api/state", {
+      fetch(apiUrl("state"), {
         method: "PUT",
         headers: Object.assign({ "Content-Type": "application/json" }, Vault.headers()),
         body: body
       }).then(res => {
+        if (res.status === 401 || res.status === 403) {
+          /* clés refusées : mémorisation périmée (mot de passe changé sur un
+             autre appareil ?) — on oublie, on reverrouille, on redemande */
+          if (!this.pushWarned) {
+            this.pushWarned = true;
+            toast("Mot de passe du coffre refusé par le serveur — saisis-le à nouveau.");
+          }
+          Vault.forgetLocal();
+          Vault.lock();
+          this.blocked = true;
+          checkLock();
+          return;
+        }
         if (res.ok || res.status === 409) return; // 409 : anti-rollback serveur, la copie distante est plus récente
         if (!this.pushWarned) {
           this.pushWarned = true;
-          toast(res.status === 401 || res.status === 403
-            ? "Synchronisation refusée : mot de passe du coffre non accepté par le serveur — les données restent sur cet appareil."
-            : "Synchronisation impossible (état trop volumineux ?) — les données restent sur cet appareil.");
+          toast("Synchronisation impossible (état trop volumineux ?) — les données restent sur cet appareil.");
         }
       }).catch(() => {});
     }, 800);
@@ -4077,6 +4381,7 @@ function polarCode(sport, detailed) {
 }
 const PolarSync = {
   busy: false,
+  lastError: null, // dernière erreur d'import (affichée dans Réglages jusqu'au succès suivant
 
   async status() {
     try {
@@ -4115,7 +4420,9 @@ const PolarSync = {
     if (!run.polar) run.polar = {};
     /* trace GPS : Polar peut livrer la route APRÈS l'import (has_route bascule
        à true une fois la trace traitée) — on la récupère alors ici */
-    if (ex && ex.has_route && !(run.points && run.points.length > 1)) {
+    /* l'API renvoie « has-route » (tiret) ou « has_route » : on accepte les deux */
+    const hasRoute = ex && (ex["has-route"] != null ? ex["has-route"] : ex.has_route);
+    if (hasRoute && !(run.points && run.points.length > 1)) {
       try {
         const pts = Geo.parseGpx(await this.gpx(run.polarId));
         if (pts && pts.length > 1) {
@@ -4138,10 +4445,18 @@ const PolarSync = {
       if (!p) return 0;
       return Math.round((parseFloat(p[1]) || 0) * 3600 + (parseFloat(p[2]) || 0) * 60 + (parseFloat(p[3]) || 0));
     };
-    /* une série d'échantillons Polar : "76,76,77,…" -> [76,76,77,…] */
+    /* une série d'échantillons Polar : "76,76,77,…" -> [76,76,77,…]
+       sample_type arrive en string ("0"…) ou en libellé ("HEART_RATE"…) :
+       on compare en string, jamais en number. */
     const seriesOf = (typeId) => {
       if (!ex || !Array.isArray(ex.samples)) return null;
-      const s = ex.samples.find(x => x && (x.sample_type === typeId || String(x.type).indexOf("heart") >= 0 && typeId === 0));
+      const names = { 0: "heart", 1: "distance", 2: "cadence", 3: "altitude" };
+      const want = String(typeId), label = names[typeId] || "";
+      const s = ex.samples.find(x => x && (
+        String(x.sample_type) === want ||
+        (label && String(x.sample_type).toLowerCase().indexOf(label) >= 0) ||
+        (x.type != null && label && String(x.type).toLowerCase().indexOf(label) >= 0)
+      ));
       if (!s) return null;
       const d = s.data;
       if (Array.isArray(d)) return d.map(Number).filter(isFinite);
@@ -4160,7 +4475,9 @@ const PolarSync = {
     let limits = null, zoneSec = null;
     if (Array.isArray(zraw) && zraw.length >= 2) {
       const sorted = zraw.slice().sort((a, b) => num(a.index) - num(b.index));
-      limits = sorted.map(z => [num(z.lower_limit != null ? z.lower_limit : z.lowerlimit), num(z.upper_limit != null ? z.upper_limit : z.upperlimit)]);
+      const lo = (z) => z.lower_limit != null ? z.lower_limit : z["lower-limit"] != null ? z["lower-limit"] : z.lowerlimit;
+      const hi = (z) => z.upper_limit != null ? z.upper_limit : z["upper-limit"] != null ? z["upper-limit"] : z.upperlimit;
+      limits = sorted.map(z => [num(lo(z)), num(hi(z))]);
       zoneSec = sorted.map(z => durSec(z.in_zone || z["in-zone"] || z.inZone));
     }
     if (!limits) {
@@ -4223,18 +4540,28 @@ const PolarSync = {
     if (hr && hr.length > 4) run.polar.hrS = compactSeries(hr);
     /* répare les séances enrichies avant la séparation des deux champs */
     if (Array.isArray(run.polar.hr)) {
-      if (ex && ex.heart_rate) run.polar.hr = { average: ex.heart_rate.average, maximum: ex.heart_rate.maximum };
+      const hrSum = ex && (ex["heart-rate"] != null ? ex["heart-rate"] : ex.heart_rate);
+      if (hrSum) run.polar.hr = { average: hrSum.average, maximum: hrSum.maximum };
       else delete run.polar.hr;
     }
     /* charge cardio : les anciennes séances la stockaient dans polar.load */
-    if (run.polar.cardioLoad == null && ex && ex.training_load_pro && ex.training_load_pro["cardio-load"] != null)
-      run.polar.cardioLoad = ex.training_load_pro["cardio-load"];
+    const tlp = ex && (ex["training-load-pro"] != null ? ex["training-load-pro"] : ex.training_load_pro);
+    if (run.polar.cardioLoad == null && tlp && tlp["cardio-load"] != null)
+      run.polar.cardioLoad = tlp["cardio-load"];
     return run;
   },
-  /* enrichit (ou rattrape) les sorties Polar sans zones complètes : quelques-unes par cycle */
+  /* enrichit (ou rattrape) les sorties Polar incomplètes : quelques-unes par cycle.
+     Une sortie reste dans la file tant qu'il manque les zones FC OU la trace GPX :
+     Polar peut livrer la route APRÈS le résumé (has_route bascule à true une fois
+     la trace traitée) — sans ce critère, le GPX ne serait jamais rattrapé.
+     Les imports CSV (polarId « csv:… ») sont exclus : l'API Polar ne les connaît pas. */
   async enrichMissing(limit) {
     if (!ServerSync.on) return;
-    const todo = state.runs.filter(r => r.polarId && (!r.polar || !r.polar.zones || !r.polar.zones.some(z => z.pct != null) || Array.isArray(r.polar.hr))).slice(0, limit || 3);
+    const todo = state.runs.filter(r => r.polarId && r.polarId.indexOf("csv:") !== 0 && (
+      !r.polar || !r.polar.zones || !r.polar.zones.some(z => z.pct != null) ||
+      Array.isArray(r.polar.hr) ||
+      (!r.points && !r.trackRef)
+    )).slice(0, limit || 3);
     let changed = false;
     for (const run of todo) {
       try {
@@ -4310,26 +4637,45 @@ const PolarSync = {
     this.busy = true;
     try {
       const list = await this.exercises();
-      let added = 0, km = 0;
+      this.lastError = null;
+      let added = 0, km = 0, autoDone = 0;
+      /* la file transactionnelle Polar utilise des id numériques, la liste
+         moderne des id hachés : une même sortie peut donc arriver deux fois
+         sous deux id — on dédoublonne aussi par signature (date + durée + distance) */
+      const alreadyKnown = (run) => state.runs.some(r =>
+        r.polarId === run.polarId ||
+        (r.date === run.date && r.polarId != null && run.polarId != null &&
+          Math.abs((r.dur || 0) - (run.dur || 0)) <= 2 &&
+          Math.abs((r.dist || 0) - (run.dist || 0)) < 0.3));
       for (const ex of list) {
         if (state.runs.some(r => r.polarId === ex.id)) continue;
         const run = await this.toRun(ex);
-        if (!run) continue;
+        if (!run || alreadyKnown(run)) continue;
         state.runs.push(run);
         added++; km += run.dist || 0;
+        /* la sortie correspond à la séance de course prévue ce jour-là
+           (toRun l'a reliée via planKey) : cochée automatiquement */
+        if (run.planKey && !state.done[run.planKey] && run.code === "CAP" && (run.dur || 0) >= 10) {
+          state.done[run.planKey] = true;
+          autoDone++;
+        }
       }
       const changed = added > 0 || state.polar.lastSync == null;
       state.polar.lastSync = Date.now();
       if (changed) save();
       if (added) {
-        toast("Polar : " + added + " sortie" + (added > 1 ? "s" : "") + " importée" + (added > 1 ? "s" : "") + " (" + km.toFixed(1).replace(".", ",") + " km). Pense à préciser chaussures et douleurs.");
+        toast("Polar : " + added + " sortie" + (added > 1 ? "s" : "") + " importée" + (added > 1 ? "s" : "") +
+          " (" + km.toFixed(1).replace(".", ",") + " km)" +
+          (autoDone ? " — " + autoDone + " séance" + (autoDone > 1 ? "s" : "") + " du programme cochée" + (autoDone > 1 ? "s" : "") + " automatiquement" : "") +
+          ". Pense à préciser chaussures et douleurs.");
         updateHeader();
         this.enrichMissing(5); // zones FC + charge des nouvelles sorties
-        if ($("#view-sessions").classList.contains("active")) renderSessions();
-        if ($("view-today") && $("view-today").classList.contains("active")) renderToday();
-      } else if (manual) toast("Polar : aucune nouvelle sortie. Rappel : seuls les exercices téléversés sur Flow APRÈS la connexion (30 derniers jours) sont transmis — laisse la montre synchroniser, puis réessaie.");
+        if ($("#view-sessions") && $("#view-sessions").classList.contains("active")) renderSessions();
+        if ($("#view-today") && $("#view-today").classList.contains("active")) renderToday();
+      } else if (manual) toast("Polar : aucune nouvelle sortie (" + list.length + " déjà connues). Rappel : seuls les exercices téléversés sur Flow APRÈS la connexion (30 derniers jours) sont transmis — laisse la montre synchroniser, puis réessaie.");
     } catch (e) {
-      if (manual) toast("Import Polar impossible : " + e.message);
+      this.lastError = (e && e.message) || String(e);
+      if (manual) toast("Import Polar impossible : " + this.lastError);
     } finally { this.busy = false; }
   },
 
@@ -4430,6 +4776,11 @@ const PolarSync = {
   async renderBox() {
     const box = $("#polar-box");
     if (!box) return;
+    /* montre Polar + imports : réservés au compte principal (Roi Burgonde) */
+    if (CUR_SLUG !== "") {
+      box.innerHTML = '<div class="muted small">La montre Polar et les imports Polar/CSV/GPX sont réservés au compte <b>Roi Burgonde</b>.</div>';
+      return;
+    }
     if (!ServerSync.on) {
       box.innerHTML = '<div class="muted small">Nécessite le serveur centralisé (deploy/worker). En hébergement statique : exporte tes sorties depuis Polar Flow (GPX) et importe-les dans l\'onglet Sorties.</div>';
       return;
@@ -4451,10 +4802,15 @@ const PolarSync = {
       return;
     }
     const last = st.lastSync ? new Date(st.lastSync).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "jamais";
+    const since = st.connectedAt ? new Date(st.connectedAt).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : null;
+    const errNote = this.lastError
+      ? '<div class="note" style="border-color:#b06a4a">Dernière tentative de synchro en échec : ' + esc(this.lastError) + ' — réessaie avec « Importer les sorties ».</div>'
+      : "";
     box.innerHTML =
-      '<div class="muted small">Montre connectée — dernière synchro : ' + last + '. ' +
+      errNote +
+      '<div class="muted small">Montre connectée' + (since ? " depuis le " + since : "") + ' — dernière synchro : ' + last + '. ' +
       'Les sorties, le sommeil, la recharge ANS/VFC (Nightly Recharge) et la charge cardio sont synchronisés à chaque ouverture de l\'app puis toutes les 5 minutes.</div>' +
-      '<div class="note">Important : Polar ne transmet que les exercices <b>téléversés sur Polar Flow APRÈS le moment de la connexion</b> de la montre ici (et des 30 derniers jours). Si une sortie est visible dans l\'appli Flow mais pas ici : laisse la montre synchroniser avec le téléphone, puis reviens ici ou appuie sur « Importer les sorties ». Les exercices enregistrés et synchronisés avant la connexion ne seront jamais transmis — c\'est une règle Polar, pas de l\'app.</div>' +
+      '<div class="note">Important : Polar ne transmet <b>que les exercices téléversés sur Polar Flow APRÈS le ' + (since || "moment de la connexion") + '</b> (et des 30 derniers jours). Une sortie enregistrée avant cette date ne sera <b>jamais</b> transmise — c\'est une règle Polar, pas de l\'app. Pour la récupérer : exporte son fichier GPX depuis l\'appli Polar Flow, puis importe-le dans l\'onglet <b>Sorties</b>.</div>' +
       '<div class="row-actions">' +
       '<button class="btn primary" id="pl-import">Importer les sorties Polar</button>' +
       '<button class="btn" id="pl-profile">Actualiser le profil (FC max, FC repos, poids, VO2max)</button>' +
@@ -4510,13 +4866,14 @@ function mergeStates(a, b) {
   const newer = tb >= ta ? b : a;
   const older = newer === b ? a : b;
   const out = {
-    start: newer.start || older.start || DEFAULT_START,
+    start: newer.start || older.start || (typeof CUR_PLAN !== "undefined" && CUR_PLAN.start) || DEFAULT_START,
     mistral: newer.mistral || older.mistral || { key: "", model: "mistral-small-latest", url: "https://api.mistral.ai" },
     polar: newer.polar || older.polar || { connected: false, lastSync: null },
     polarNights: mergeByKey(a.polarNights, b.polarNights, newer === b),
     password: newer.password !== undefined ? newer.password : older.password,
     lastShoeId: newer.lastShoeId != null ? newer.lastShoeId : (older.lastShoeId != null ? older.lastShoeId : null),
     lastWeekView: newer.lastWeekView != null ? newer.lastWeekView : older.lastWeekView,
+    welcomed: newer.welcomed === true || older.welcomed === true,
     updatedAt: Math.max(ta, tb)
   };
   out.done = {};
@@ -4610,13 +4967,15 @@ function sortForCompare(st) {
   Object.keys(st.polarNights || {}).sort().forEach(k => { c.polarNights[k] = st.polarNights[k]; });
   c.convs = (st.convs || []).slice().sort((x, y) => x.id - y.id)
     .map(cv => Object.assign({}, cv, { msgs: (cv.msgs || []).slice() }));
+  c.welcomed = st.welcomed === true;
   return c;
 }
 function updateStorageBadge() {
   const el = $("#storage-mode");
-  if (el) el.textContent = ServerSync.on
+  if (el) el.textContent = (ServerSync.on
     ? "Stockage : serveur centralisé — " + (Vault.ready ? "chiffré de bout en bout" : "partagé entre appareils")
-    : "Stockage : ce navigateur uniquement" + (Vault.ready ? " (chiffré)" : " (localStorage)");
+    : "Stockage : ce navigateur uniquement" + (Vault.ready ? " (chiffré)" : " (localStorage)")) +
+    " · build " + APP_VERSION;
 }
 
 /* ================= onglets : flèche masquer/afficher ================= */
@@ -4625,7 +4984,7 @@ function applyNav() {
   const c = localStorage.getItem(NAV_KEY) === "1";
   const nav = $("nav#tabs"), btn = $("#nav-toggle");
   if (nav) nav.classList.toggle("collapsed", c);
-  if (btn) { btn.textContent = c ? "\u25B8" : "\u25BE"; btn.title = c ? "Afficher les onglets" : "Masquer les onglets"; }
+  if (btn) { btn.textContent = c ? "▸" : "▾"; btn.title = c ? "Afficher les onglets" : "Masquer les onglets"; }
 }
 $("#nav-toggle").addEventListener("click", () => {
   localStorage.setItem(NAV_KEY, localStorage.getItem(NAV_KEY) === "1" ? "0" : "1");
@@ -4642,12 +5001,12 @@ function checkLock() {
      c'est LE verrou — le mot de passe de l'état ne s'ajoute pas dessus */
   const needVault = !Vault.ready && (Vault.pendingBlob || ServerSync.authRequired);
   if (Vault.ready || needVault) {
-    if (!needVault) { ov.classList.add("hidden"); return; }
+    if (!needVault) { ov.classList.add("hidden"); maybeWelcome(); return; }
     lockMode = "vault";
     $("#lock-title").textContent = "Données chiffrées";
     $("#lock-desc").textContent = "Entre le mot de passe de chiffrement : sans lui, ni cet appareil ni le serveur ne peuvent lire les données.";
     const rw = $("#lock-remember-wrap");
-    if (rw) rw.style.display = "none"; // la clé reste en mémoire uniquement : pas de « se souvenir »
+    if (rw) rw.style.display = ""; // « se souvenir » : les clés dérivées restent sur l'appareil
     ov.classList.remove("hidden");
     setTimeout(() => { const p = $("#lock-pass"); if (p) p.focus(); }, 60);
     return;
@@ -4657,7 +5016,8 @@ function checkLock() {
   if (rw) rw.style.display = "";
   $("#lock-title").textContent = "TrainingTrail verrouillé";
   $("#lock-desc").textContent = "Entre le mot de passe de l'application pour continuer.";
-  if (!state.password || localStorage.getItem(UNLOCK_KEY) === "1") { ov.classList.add("hidden"); return; }
+  /* plusieurs comptes sur cet appareil (mode « amis ») : pas de verrou app */
+  if (!state.password || localStorage.getItem(UNLOCK_KEY) === "1" || Object.keys(SESS.list).length > 1) { ov.classList.add("hidden"); maybeWelcome(); return; }
   ov.classList.remove("hidden");
   setTimeout(() => { const p = $("#lock-pass"); if (p) p.focus(); }, 60);
 }
@@ -4669,6 +5029,7 @@ function tryUnlock() {
   if ($("#lock-remember").checked) localStorage.setItem(UNLOCK_KEY, "1");
   p.value = "";
   $("#lock-modal").classList.add("hidden");
+  maybeWelcome();
 }
 /* déverrouillage du coffre : dérive les clés, vérifie le mot de passe sur le
    blob local (tag AES-GCM) ou, à défaut, auprès du serveur (X-TT-Key) */
@@ -4694,7 +5055,7 @@ async function unlockVault(pass) {
   }
   /* pas de blob local : le serveur tranche (401 = mauvais mot de passe) */
   Vault.adopt(keys);
-  const res = await fetch("api/state", { cache: "no-store", headers: Vault.headers() });
+  const res = await fetch(apiUrl("state"), { cache: "no-store", headers: Vault.headers() });
   if (res.status === 401 || res.status === 403) { Vault.lock(); throw new Error("bad"); }
   if (!res.ok) { Vault.lock(); throw new Error("serveur " + res.status); }
   return null;
@@ -4707,6 +5068,10 @@ async function tryVaultUnlock(p) {
   try {
     const plain = await unlockVault(pass);
     p.value = ""; p.disabled = false; go.disabled = false; go.textContent = "Déverrouiller";
+    p.type = "password"; // l'œil ne laisse rien affiché après déverrouillage
+    /* « se souvenir sur cet appareil » : les clés dérivées (jamais le mot de
+       passe) restent sur l'appareil — il ne sera plus demandé ici */
+    if ($("#lock-remember") && $("#lock-remember").checked) Vault.saveLocal();
     $("#lock-modal").classList.add("hidden");
     await afterVaultUnlock(plain);
   } catch (e) {
@@ -4727,19 +5092,250 @@ async function afterVaultUnlock(plain) {
   updateHeader();
   ServerSync.init(); // ping + pull : la fusion additive ramène l'état du serveur
   checkLock();
+  maybeWelcome();
 }
 $("#lock-go").addEventListener("click", tryUnlock);
 $("#lock-pass").addEventListener("keydown", e => { if (e.key === "Enter") tryUnlock(); });
 
+/* ================= champs de mot de passe : œil afficher/masquer ================= */
+/* enveloppe le champ dans un conteneur et ajoute un bouton œil à droite :
+   œil ouvert = mot de passe visible, œil barré = masqué */
+function bindEye(input) {
+  if (!input || input.dataset.eyeBound) return;
+  input.dataset.eyeBound = "1";
+  const wrap = document.createElement("span");
+  wrap.className = "pwd-field";
+  input.parentNode.insertBefore(wrap, input);
+  wrap.appendChild(input);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "pwd-eye";
+  btn.textContent = "👁";
+  btn.title = "Afficher / masquer";
+  btn.setAttribute("aria-label", "Afficher ou masquer le mot de passe");
+  btn.addEventListener("mousedown", e => e.preventDefault()); // garde le focus dans le champ
+  btn.addEventListener("click", e => {
+    e.preventDefault();
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.textContent = show ? "🙈" : "👁";
+    btn.title = show ? "Masquer" : "Afficher";
+    input.focus();
+  });
+  wrap.appendChild(btn);
+}
+function bindEyes(root) {
+  (root || document).querySelectorAll('input[type="password"]').forEach(bindEye);
+}
+bindEyes(document); // champ du verrou (statique dans index.html)
+
+/* ================= sessions (multi-comptes) & bienvenue ================= */
+/* options du sélecteur « Compte » : les comptes disponibles (ACCOUNTS) +
+   les sessions déjà connues de cet appareil qui n'y figurent pas */
+function accountOptionsHTML(selSlug) {
+  const opts = [], seen = {};
+  (typeof ACCOUNTS !== "undefined" ? ACCOUNTS : []).forEach(a => {
+    const s = slugify(a.name);
+    seen[s] = true;
+    opts.push({ slug: s, name: a.name });
+  });
+  Object.keys(SESS.list).forEach(s => {
+    if (!seen[s]) { seen[s] = true; opts.push({ slug: s, name: SESS.list[s].name }); }
+  });
+  return opts.map(o =>
+    '<option value="' + esc(o.slug) + '"' + (o.slug === selSlug ? " selected" : "") + ">" + esc(o.name) + "</option>").join("");
+}
+function gifOfSlug(slug) {
+  const e = SESS.list[slug] || (typeof ACCOUNTS !== "undefined" ? ACCOUNTS.find(a => slugify(a.name) === slug) : null);
+  return (e && e.gif) || "";
+}
+function sessListHTML() {
+  return Object.keys(SESS.list).map(slug => {
+    const s = SESS.list[slug], p = planOf(s.program);
+    return '<div class="sess-row' + (slug === CUR_SLUG ? " active" : "") + '">' +
+      (s.gif ? '<img class="sess-gif sm" src="' + esc(s.gif) + '" alt="">' : '<span class="sess-gif-ph sm">⛰</span>') +
+      '<div class="sess-info"><b>' + esc(s.name) + '</b> <span class="muted small">' + esc(p.label) + "</span></div>" +
+      '<div class="row-actions">' +
+      (slug !== CUR_SLUG ? '<button class="btn" data-sess-open="' + esc(slug) + '">Ouvrir</button>' : '<span class="badge light">compte ouvert</span>') +
+      "</div></div>";
+  }).join("");
+}
+function showSessionPicker(openForm) {
+  const sel = $("#sess-account");
+  if (sel && !sel.options.length) sel.innerHTML = accountOptionsHTML(CUR_SLUG);
+  $("#sess-list").innerHTML = sessListHTML();
+  $$("#sess-list .sess-card").forEach(b => b.addEventListener("click", () => selectSession(b.dataset.sess)));
+  $("#sess-form").classList.toggle("hidden", !openForm);
+  $("#sess-new-btn").textContent = openForm ? "Annuler" : "＋ Ouvrir un autre compte";
+  $("#sess-modal").classList.remove("hidden");
+  updateSessGifPrev();
+}
+function updateSessGifPrev() {
+  const sel = $("#sess-account"), img = $("#sess-gifprev");
+  if (sel && img) { const g = gifOfSlug(sel.value); if (g) img.src = g; }
+}
+const SESS_GIF_KEY = "trainingtrail_sess_gif"; // slug dont le GIF s'affiche à l'ouverture
+function selectSession(slug) {
+  if (!SESS.list[slug]) return;
+  if (slug === CUR_SLUG && SESS.active === slug) { $("#sess-modal").classList.add("hidden"); return; }
+  save(); // l'état courant est bien enregistré avant de changer de session
+  SESS.active = slug;
+  saveSessions();
+  /* changement de compte sans mot de passe + GIF à l'ouverture du compte */
+  try {
+    localStorage.setItem(UNLOCK_KEY, "1");
+    localStorage.setItem(SESS_GIF_KEY, slug);
+  } catch (e) { }
+  location.reload();
+}
+/* ouvre un compte du sélecteur : crée l'entrée locale si besoin (même slug =
+   mêmes données sur le serveur via ?user=), puis bascule dessus */
+function openAccount(slug) {
+  if (!SESS.list[slug]) {
+    const preset = (typeof ACCOUNTS !== "undefined" ? ACCOUNTS : []).find(a => slugify(a.name) === slug);
+    if (!preset) { toast("Compte inconnu."); return; }
+    SESS.list[slug] = { name: preset.name, program: preset.program, gif: preset.gif || "", created: Date.now() };
+    saveSessions();
+  }
+  selectSession(slug);
+}
+/* suppression d'un compte : réservée à l'administrateur (mot de passe exigé) */
+let ADM_TARGET = null;
+function askAdmin(slug) {
+  ADM_TARGET = slug;
+  $("#adm-desc").textContent = "Supprimer le compte « " + ((SESS.list[slug] || {}).name || slug) +
+    " » ? Ses données seront supprimées sur cet appareil ET sur le serveur (état + traces GPS). Action irréversible.";
+  $("#adm-pass").value = "";
+  $("#adm-modal").classList.remove("hidden");
+  setTimeout(() => { const p = $("#adm-pass"); if (p) p.focus(); }, 60);
+}
+function tryAdmin() {
+  const p = $("#adm-pass");
+  if (!p) return;
+  if (p.value !== ADMIN_PASSWORD) { toast("Mot de passe administrateur incorrect."); return; }
+  const slug = ADM_TARGET;
+  p.value = "";
+  $("#adm-modal").classList.add("hidden");
+  if (slug != null) deleteSession(slug);
+}
+function deleteSession(slug) {
+  const s = SESS.list[slug];
+  if (!s) return;
+  const lk = slug ? LS_KEY + "_" + slug : LS_KEY;
+  const vk = slug ? VAULT_LS_KEY + "_" + slug : VAULT_LS_KEY;
+  try { localStorage.removeItem(lk); localStorage.removeItem(vk); } catch (e) { }
+  ServerSync.delSession(slug);
+  delete SESS.list[slug];
+  if (SESS.active === slug) SESS.active = "";
+  saveSessions();
+  toast("Compte « " + s.name + " » supprimé.");
+  if (CUR_SLUG === slug) location.reload();
+  else renderCompte();
+}
+
+/* ================= vue : Compte (Paramètres → Compte) =================
+   Changer de compte sans mot de passe : ouvrir un autre compte recharge
+   l'app sur son programme ; le GIF du compte s'affiche à l'ouverture. */
+function renderCompte() {
+  const cur = CUR_SESS();
+  const gifImg = g => g ? '<img class="sess-gif sm" src="' + esc(g) + '" alt="">' : '<span class="sess-gif-ph sm">⛰</span>';
+  const others = Object.keys(SESS.list).filter(s => s !== CUR_SLUG);
+  $("#view-compte").innerHTML =
+    "<h2>Compte</h2>" +
+    '<div class="muted small">Changer de compte ne demande <b>aucun mot de passe</b> : le GIF de bienvenue du compte s\'affiche à l\'ouverture, et tous les onglets (programme, séances, sorties, chaussures, coach…) s\'adaptent au compte choisi. Supprimer un compte (✕) demande le <b>mot de passe administrateur</b>.</div>' +
+    '<div class="sess-list">' +
+      '<div class="sess-row active">' + gifImg(cur.gif) +
+        '<div class="sess-info"><b>' + esc(cur.name) + '</b> <span class="muted small">' + esc(CUR_PLAN.label) + "</span></div>" +
+        '<div class="row-actions"><span class="badge light">compte ouvert</span>' +
+        (Object.keys(SESS.list).length > 1 ? '<button class="btn danger" data-sess-del="' + esc(CUR_SLUG) + '" title="Supprimer ce compte (mot de passe admin requis)">✕</button>' : "") +
+        "</div></div>" +
+      others.map(slug => {
+        const s = SESS.list[slug];
+        return '<div class="sess-row">' + gifImg(s.gif) +
+          '<div class="sess-info"><b>' + esc(s.name) + '</b> <span class="muted small">' + esc(planOf(s.program).label) + "</span></div>" +
+          '<div class="row-actions">' +
+            '<button class="btn primary" data-sess-open="' + esc(slug) + '">Ouvrir</button>' +
+            '<button class="btn danger" data-sess-del="' + esc(slug) + '" title="Supprimer ce compte (mot de passe admin requis)">✕</button>' +
+          "</div></div>";
+      }).join("") +
+    "</div>" +
+    "<h3>Ouvrir un compte</h3>" +
+    '<div class="form-grid">' +
+      '<label class="full">Compte <select id="cp-account">' + accountOptionsHTML(CUR_SLUG) + "</select></label>" +
+    "</div>" +
+    '<div class="muted small">GIF de bienvenue : <img id="cp-gifprev" class="sess-gif sm" alt="aperçu du GIF"></div>' +
+    '<div class="row-actions">' +
+      '<button class="btn primary" id="cp-open">Ouvrir ce compte</button>' +
+      '<button class="btn" id="cp-welcome">Revoir le GIF de bienvenue</button>' +
+    "</div>";
+  $$("#view-compte [data-sess-open]").forEach(b => b.addEventListener("click", () => selectSession(b.dataset.sessOpen)));
+  $$("#view-compte [data-sess-del]").forEach(b => b.addEventListener("click", () => askAdmin(b.dataset.sessDel)));
+  $("#cp-open").addEventListener("click", () => openAccount($("#cp-account").value));
+  const cpGif = () => { const g = gifOfSlug($("#cp-account").value); if (g) $("#cp-gifprev").src = g; };
+  $("#cp-account").addEventListener("change", cpGif);
+  cpGif();
+  $("#cp-welcome").addEventListener("click", () => showWelcome(false));
+}
+/* GIF de bienvenue à la première connexion de la session */
+function showWelcome(mark) {
+  const s = CUR_SESS();
+  $("#welcome-title").textContent = "Bienvenue, " + s.name + " !";
+  const img = $("#welcome-gif");
+  if (s.gif) { img.src = s.gif; img.style.display = ""; } else img.style.display = "none";
+  $("#welcome-text").textContent = CUR_PLAN.welcome || "";
+  $("#welcome-modal").classList.remove("hidden");
+  if (mark) { state.welcomed = true; save(); }
+}
+function maybeWelcome() {
+  if (!$("#welcome-modal").classList.contains("hidden")) return; // déjà affiché
+  if (!$("#lock-modal").classList.contains("hidden")) return;  // attendre le déverrouillage
+  if (!$("#sess-modal").classList.contains("hidden")) return;  // attendre le choix de session
+  /* GIF à l'ouverture du compte après un changement de session */
+  let gifSlug = null;
+  try { gifSlug = localStorage.getItem(SESS_GIF_KEY); } catch (e) { }
+  if (gifSlug && gifSlug === CUR_SLUG) {
+    try { localStorage.removeItem(SESS_GIF_KEY); } catch (e) { }
+    showWelcome(false);
+    return;
+  }
+  if (!state.welcomed) showWelcome(true); // première connexion de la session
+}
+/* boutons des modales de session / bienvenue (éléments statiques du HTML) */
+$("#sess-new-btn").addEventListener("click", () => {
+  const f = $("#sess-form");
+  showSessionPicker(f.classList.contains("hidden"));
+});
+$("#sess-cancel").addEventListener("click", () => { $("#sess-form").classList.add("hidden"); $("#sess-new-btn").textContent = "＋ Ouvrir un autre compte"; });
+$("#sess-open").addEventListener("click", () => openAccount($("#sess-account").value));
+$("#sess-account").addEventListener("change", updateSessGifPrev);
+$("#welcome-ok").addEventListener("click", () => $("#welcome-modal").classList.add("hidden"));
+/* modale mot de passe administrateur (suppression de compte) */
+$("#adm-go").addEventListener("click", tryAdmin);
+$("#adm-pass").addEventListener("keydown", e => { if (e.key === "Enter") tryAdmin(); });
+$("#adm-cancel").addEventListener("click", () => $("#adm-modal").classList.add("hidden"));
+
 /* ================= démarrage ================= */
-activateView("today");
-importFromHash();
-importPolarHash();
-ServerSync.init();
-offerResume();
-checkLock();
-slimOldTracks();
-applyNav();
+/* restaure d'abord les clés mémorisées (« se souvenir sur cet appareil ») :
+   sans mot de passe à taper, la synchro et le verrou partent directement */
+(async () => {
+  await Vault.restore();
+  activateView("today");
+  importFromHash();
+  importPolarHash();
+  const chosen = SESS.active != null && !!SESS.list[SESS.active];
+  if (chosen) {
+    ServerSync.init();
+    checkLock();
+  } else {
+    /* aucune session choisie sur cet appareil : on ne synchronise rien avant
+       le choix (le sélecteur s'ouvre par-dessus l'app) */
+    $("#lock-modal").classList.add("hidden");
+    showSessionPicker(false);
+  }
+  offerResume();
+  slimOldTracks();
+  applyNav();
+})();
 /* zoom verrouillé sur mobile : le pincement à deux doigts est désactivé
    (Safari iOS ignore user-scalable=no, on bloque donc les gestes) */
 ["gesturestart", "gesturechange", "gestureend"].forEach(ev =>

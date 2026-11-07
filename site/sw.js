@@ -1,18 +1,21 @@
 /* Service worker TrainingTrail — page : réseau d'abord (mises à jour
    immédiates) puis cache hors ligne ; fichiers versionnés : cache-first.
    À chaque déploiement : mettre à jour CACHE et les versions ?v= ci-dessous. */
-const CACHE = "trainingtrail-2026102811";
+const CACHE = "trainingtrail-20261107";
 const ASSETS = [
   "./",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
-  "./css/style.css?v=2026102809",
-  "./js/data.js?v=2026102809",
+  "./css/style.css?v=20261107",
+  "./js/data.js?v=2026110401",
   "./js/anim.js?v=2026102809",
   "./js/gpx.js?v=2026102809",
-  "./js/crypto.js?v=2026102811",
-  "./js/app.js?v=2026102811"
+  "./js/crypto.js?v=20261104",
+  "./js/app.js?v=20261107",
+  "./assets/welcome/burgon-king.gif",
+  "./assets/welcome/el-fourbos.gif",
+  "./assets/welcome/panda-cat.gif"
 ];
 
 self.addEventListener("install", e => {

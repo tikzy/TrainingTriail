@@ -1,8 +1,10 @@
 "use strict";
 /* Données du programme d'entraînement — Trail des Forts 72 km, Besançon, 9 mai 2027.
-   Transcrit depuis programme_entrainement_trail_des_forts.tex */
+   Transcrit depuis programme_entrainement_trail_des_forts.tex
+   Multi-sessions : RACE / BLOCKS / WEEKS sont des let mutables — useProgram()
+   les redirige vers le programme de la session active (voir PROGRAMS). */
 
-const RACE = {
+let RACE = {
   name: "Trail des Forts",
   dist: 72,          // km
   dplus: 2800,       // m D+
@@ -11,12 +13,12 @@ const RACE = {
   note: "Barrières horaires : 6,2 km/h de moyenne. Objectif : terminer en 10 h 30 – 11 h 30."
 };
 
-const DEFAULT_START = "2026-10-19"; // lundi de la semaine 1
+const DEFAULT_START = "2026-10-19"; // lundi de la semaine 1 (programme Trail des Forts)
 
 /* item : { s: slot (matin|midi|autre), c: code, m: minutes indicatives, t: texte, dplus } */
 const I = (s, c, m, t, o) => Object.assign({ s, c, m, t }, o || {});
 
-const BLOCKS = [
+let BLOCKS = [
   { n: 1, weeks: [1, 6],   name: "Fondation",    color: "#3d6ea5" },
   { n: 2, weeks: [7, 14],  name: "Développement", color: "#2f7fbf" },
   { n: 3, weeks: [15, 21], name: "Spécifique I", color: "#1a8fa8" },
@@ -34,6 +36,7 @@ const TYPES = {
   MAS:   { label: "Automassage", kind: "recovery", desc: "Rouleau ou balle : fessier, TFL, extérieur de cuisse (essuie-glace), puis étirements doux 20-30'' par groupe." },
   NAT:   { label: "Natation", kind: "swim", desc: "40-45' : récupération active et travail respiratoire." },
   YOGA:  { label: "Yoga", kind: "yoga", desc: "Hatha yoga : mobilité, respiration, gainage doux." },
+  PILA:  { label: "Pilates", kind: "strength", desc: "Pilates : gainage profond, mobilité du bassin, respiration. Renforcement doux, idéal en reprise ou les jours sans course." },
   EV:    { label: "EV", kind: "run", desc: "Endurance vallonnée : 6-8 km à la pause du midi avec 200-300 m D+, 65-75 % FCM." },
   EP:    { label: "EP", kind: "run", desc: "Endurance sur le plat : footing souple, 65-75 % FCM." },
   SQ1:   { label: "SQ1 VMA", kind: "run", desc: "10 à 16 × 30'' fort / 30'' lent (90-95 % FCM), en côte dès S9. Échauffement 15', retour au calme 10'.", timer: { work: 30, rest: 30, reps: 16, sets: 1, setrest: 120 } },
@@ -88,8 +91,8 @@ function fmtMin(m) {
   return h + " h" + (r ? " " + (r < 10 ? "0" : "") + r + "'" : "");
 }
 
-/* ---------- les 29 semaines ---------- */
-const WEEKS = [
+/* ---------- les 29 semaines (programme Trail des Forts) ---------- */
+let WEEKS = [
   { n: 1, vol: 4.5, light: false, days: [
     lundi(30), [], [I("midi", "EV", 45, "EV 45' — 250 m D+", { dplus: 250 })], rmb(25),
     ep(45), v(60, "souple"), sl(75, 300)
@@ -223,6 +226,179 @@ const WEEKS = [
     [I("autre", "RACE", 420, "COURSE : Trail des Forts — 72 km, 2 800 m D+", { dplus: 2800 })]
   ]}
 ];
+
+/* ================= programmes des sessions =================
+   Chaque session (compte) a son propre programme : PROGRAMS[id] =
+   { label, race (null = pas de course visée), start, blocks, weeks, gif }.
+   useProgram(id) redirige les globales RACE / BLOCKS / WEEKS. */
+
+/* --- El Fourbos : même Trail des Forts 72 km, mais calé sur son emploi du
+       temps — courses à la pause du midi en semaine (lundi/mercredi/vendredi,
+       jeudi si besoin) et UNE seule séance le week-end (la sortie longue une
+       semaine sur deux, sinon un footing souple). Pas de blessure : on garde
+       un peu de renforcement, sans la routine cheville/essuie-glace.
+       Construit en réorganisant les semaines du plan de référence. --- */
+function buildFourbosWeeks() {
+  return WEEKS.map(B => {
+    if (B.n === WEEKS.length) // semaine de course : telle quelle, sans le yoga (déjà midi en semaine + course dimanche)
+      return { n: B.n, vol: B.vol, light: B.light, days: B.days.map(d => d.filter(it => it.c !== "YOGA")) };
+    const days = [[], [], [], [], [], [], []];
+    const sq = [], weekdayRuns = [], weekendCaps = [], dt = [], runsRest = [], morning = [[], [], [], [], [], [], []];
+    let sl = null;
+    B.days.forEach((day, d) => day.forEach(it => {
+      const c = it.c;
+      if (/^SQ/.test(c)) sq.push(it);
+      else if (c === "SL") sl = it;
+      else if (c === "DT") dt.push(it);
+      // YOGA : retiré du programme El Fourbos
+      else if (["RMA", "RMB", "RMC", "CORDE", "GAING", "PROP", "MAS"].includes(c)) morning[d].push(it);
+      else if (d <= 4 && ["EV", "EP", "CAP"].includes(c)) weekdayRuns.push(it);
+      else if (["LD", "GAM"].includes(c)) runsRest.push(it); // lignes droites / gammes : avec la dernière course
+      else if (d >= 5 && c === "CAP") weekendCaps.push(it);
+      // NAT / V / REST du week-end : remplacés par la séance unique du samedi
+    }));
+    /* renforcement du matin : lundi RMA/GAING/PROP, mardi CORDE/RMC, jeudi RMB */
+    morning.forEach((list, d) => list.forEach(it => {
+      let dd = d;
+      if (it.c === "RMB") dd = 3;
+      else if (it.c === "CORDE" || it.c === "RMC") dd = 1;
+      else if (d >= 5) dd = 0;
+      days[dd].push(I("matin", it.c, it.m, it.t));
+    }));
+    /* midi en semaine : qualité mercredi, footings lundi/vendredi (jeudi si 3e) */
+    sq.forEach(it => days[2].push(Object.assign({}, it, { s: "midi" })));
+    const slots = [0, 4, 3];
+    weekdayRuns.forEach((it, i) => {
+      const dd = slots[Math.min(i, 2)];
+      days[dd].push(Object.assign({}, it, { s: "midi" }));
+    });
+    /* DT / LD / GAM s'accrochent au dernier jour de course de la semaine */
+    const lastRunDay = weekdayRuns.length ? slots[Math.min(weekdayRuns.length - 1, 2)] : 4;
+    dt.forEach(it => days[lastRunDay].push(Object.assign({}, it, { s: "midi" })));
+    runsRest.forEach(it => days[lastRunDay].push(Object.assign({}, it, { s: "midi" })));
+    /* samedi : la seule séance du week-end */
+    if (sl) days[5].push(I("autre", "SL", sl.m, sl.t, sl.dplus ? { dplus: sl.dplus } : {}));
+    else if (weekendCaps.length) {
+      const c = weekendCaps[0];
+      days[5].push(I("autre", "CAP", Math.min(c.m || 45, 75), "CAP " + fmtMin(Math.min(c.m || 45, 75)) + " souple"));
+    } else if (!B.light) days[5].push(I("autre", "CAP", 45, "CAP 45' souple"));
+    else days[5].push(I("autre", "REST", 0, "Repos"));
+    days[6].push(I("autre", "REST", 0, "Repos"));
+    return { n: B.n, vol: B.vol, light: B.light, days };
+  });
+}
+
+/* --- Panda Cat : reprise très progressive après une pause. 3 courses à la
+       pause du midi (lundi/mercredi/vendredi), renforcement court les autres
+       jours (pilates, yoga, gainage, proprioception), cheville à ménager :
+       proprioception quotidienne, terrain plat, pas de descente, D+ minimal.
+       12 semaines, progression 3+1 (semaines allégées S4, S8, S12). --- */
+function buildPandaCatWeeks() {
+  /* CAP en alternance course/marche : m = durée totale, txt = détail */
+  const rw = (m, txt) => I("midi", "CAP", m, "CAP " + m + "' — " + txt);
+  const run = (m, txt, dplus) => I("midi", "CAP", m, "CAP " + m + "'" + (txt ? " — " + txt : ""), dplus ? { dplus } : {});
+  const ev = (m, dplus) => I("midi", "EV", m, "EV " + m + "'" + (dplus ? " — " + dplus + " m D+" : ""), dplus ? { dplus } : {});
+  const pilates = m => I("autre", "PILA", m, "Pilates " + m + "'");
+  const yogaP = m => I("autre", "YOGA", m, "Yoga " + m + "'");
+  const gain = m => I("matin", "GAING", m, "Gainage " + m + "'");
+  const prop = () => I("matin", "PROP", 5, "Proprioception cheville 5' (obligatoire)");
+  const mas = m => I("autre", "MAS", m, "Automassage " + m + "'");
+  const repos = () => I("autre", "REST", 0, "Repos");
+  const base = {
+    mardi: [pilates(20), prop()],
+    jeudi: [yogaP(30), prop()],
+    samedi: [gain(10), prop()],
+    dimanche: [repos()]
+  };
+  const lightRenfo = {
+    mardi: [pilates(15), prop()],
+    jeudi: [yogaP(25), prop()],
+    samedi: [gain(10), prop()],
+    dimanche: [mas(10)]
+  };
+  const W = [];
+  /* l, m, v = séances du lundi / mercredi / vendredi (avec proprio le matin) */
+  const add = (l, m, v, vol, light, r) => W.push({
+    n: W.length + 1, vol: vol, light: !!light,
+    days: [
+      [prop()].concat(l), (r || base).mardi, [prop()].concat(m), (r || base).jeudi,
+      [prop()].concat(v), (r || base).samedi, (r || base).dimanche
+    ]
+  });
+  /* S1-S3 : marche/course en alternance, on reconstruit la base */
+  add([rw(20, "1' course / 1' marche × 10")], [rw(20, "1' course / 2' marche × 7")], [rw(25, "2' course / 1' marche × 8")], 1.75, false);
+  add([rw(25, "2' course / 1' marche × 8")], [rw(25, "2' course / 1' marche × 8")], [rw(30, "3' course / 1' marche × 7")], 2.25, false);
+  add([rw(30, "3' course / 1' marche × 7")], [rw(30, "3' course / 1' marche × 7")], [rw(35, "4' course / 1' marche × 7")], 2.5, false);
+  add([rw(20, "2' course / 2' marche × 5")], [rw(20, "2' course / 2' marche × 5")], [rw(25, "3' course / 2' marche × 5")], 1.5, true, lightRenfo); // S4 allégée
+  /* S5-S7 : course continue, puis premières côtes douces */
+  add([run(30, "course continue, allure très souple")], [run(30, "course continue")], [run(35, "course continue")], 2.5, false);
+  add([run(35, "continue")], [run(30, "continue")], [ev(40, 100)], 2.75, false);
+  add([run(35, "continue")], [run(40, "continue")], [ev(45, 150)], 3, false);
+  add([run(25, "continue souple")], [run(25, "continue souple")], [run(30, "continue souple")], 2, true, lightRenfo); // S8 allégée
+  /* S9-S12 : endurance, la séance du vendredi s'allonge */
+  add([run(40, "continue")], [run(40, "continue")], [ev(50, 200)], 3.25, false);
+  add([run(40, "continue")], [run(45, "continue + 4 × 30'' en côte douce")], [ev(55, 250)], 3.5, false);
+  add([run(45, "continue")], [run(45, "continue")], [ev(60, 300)], 3.75, false);
+  add([run(30, "continue souple")], [run(30, "continue souple")], [run(40, "test : 40' en continu")], 2.5, true, lightRenfo); // S12 allégée
+  return W;
+}
+
+const PANDA_BLOCKS = [
+  { n: 1, weeks: [1, 4],  name: "Reprise",      color: "#3d6ea5" },
+  { n: 2, weeks: [5, 8],  name: "Construction", color: "#2f7fbf" },
+  { n: 3, weeks: [9, 12], name: "Consolidation", color: "#1a8fa8" }
+];
+
+/* programme « retour en douceur » de Panda Cat : lundi de S1 = aujourd'hui
+   (ou le lundi suivant si on est déjà en milieu de semaine) */
+function pandaStart() {
+  const d = new Date();
+  const dow = (d.getDay() + 6) % 7; // 0 = lundi
+  const monday = new Date(d.getTime() - dow * 864e5);
+  if (dow >= 3) monday.setTime(monday.getTime() + 7 * 864e5); // à partir de jeudi : lundi prochain
+  return monday.getFullYear() + "-" + String(monday.getMonth() + 1).padStart(2, "0") + "-" + String(monday.getDate()).padStart(2, "0");
+}
+
+const PROGRAMS = {
+  "trail-des-forts": {
+    label: "Trail des Forts — 72 km, 9 mai 2027",
+    race: RACE, start: DEFAULT_START, blocks: BLOCKS, weeks: WEEKS,
+    gif: "assets/welcome/burgon-king.gif",
+    welcome: "Bienvenue, Roi Burgonde — ta cour est prête. Le Trail des Forts t'attend le 9 mai 2027."
+  },
+  "el-fourbos": {
+    label: "Trail des Forts — 72 km, 9 mai 2027 (emploi du temps El Fourbos)",
+    race: RACE, start: DEFAULT_START, blocks: BLOCKS, weeks: buildFourbosWeeks(),
+    gif: "assets/welcome/el-fourbos.gif",
+    welcome: "Bienvenue, El Fourbos ! Un blaireau rusé et costaud pour te guider vers les 72 km du Trail des Forts."
+  },
+  "panda-cat": {
+    label: "Retour en douceur — reprise progressive (12 semaines)",
+    race: null, start: pandaStart(), blocks: PANDA_BLOCKS, weeks: buildPandaCatWeeks(),
+    gif: "assets/welcome/panda-cat.gif",
+    welcome: "Bienvenue, Panda Cat ! Guerrière panda-chat : on reprend en douceur, tout en kung-fu."
+  }
+};
+/* comptes disponibles (liste proposée dans l'onglet Compte) : nom + programme
+   + GIF de bienvenue. Le slug dérivé du nom sert d'emplacement serveur (?user=). */
+const ACCOUNTS = [
+  { name: "Roi Burgonde", program: "trail-des-forts", gif: "assets/welcome/burgon-king.gif" },
+  { name: "Panda Cat",    program: "panda-cat",       gif: "assets/welcome/panda-cat.gif" },
+  { name: "El Fourbos",   program: "el-fourbos",     gif: "assets/welcome/el-fourbos.gif" }
+];
+
+/* programme actif (défaut : Trail des Forts) */
+let PLAN_ID = "trail-des-forts";
+function planOf(id) { return PROGRAMS[id] || PROGRAMS["trail-des-forts"]; }
+/* redirige RACE / BLOCKS / WEEKS vers le programme demandé */
+function useProgram(id) {
+  const p = planOf(id);
+  PLAN_ID = PROGRAMS[id] ? id : "trail-des-forts";
+  RACE = p.race;
+  BLOCKS = p.blocks;
+  WEEKS = p.weeks;
+  return p;
+}
 
 /* ---------- exercices de renforcement (avec animation + minuteur) ---------- */
 const EXERCISES = [
@@ -514,6 +690,26 @@ Appuie-toi sur l'état du programme et des sorties fourni ci-dessous ; si une in
 Ne donne jamais de conseil médical : en cas de douleur persistante, oriente vers un kiné ou un médecin.
 Contexte en temps réel ci-dessous (mis à jour à chaque question) :`;
 
+/* variante « retour en douceur » (session sans course visée, ex. Panda Cat) */
+const COACH_SKILL_PANDA = `Tu es « Coach Trail », l'assistant d'entraînement intégré au site TrainingTrail.
+Tu conseilles une coureuse qui REPREND la course après une pause : elle veut y aller doucement, sans se blesser.
+Son programme : 12 semaines, 3 courses courtes à la pause du midi (lundi, mercredi, vendredi), renforcement court
+les autres jours (pilates, yoga, gainage). Semaines allégées S4, S8, S12 (progression 3+1) — ne jamais les charger.
+Point de vigilance prioritaire : une cheville avec un antécédent d'entorse — proprioception quotidienne obligatoire,
+terrain plat de préférence, AUCUNE descente vive, dénivelé minimal, mollets renforcés. Règle de la douleur :
+cheville > 3/10 sur deux séances consécutives = supprimer le dénivelé et ralentir, consulter un kiné si ça persiste.
+Règles générales : juger l'effort (RPE, test de la parole) plutôt que la montre ; le sous-entraîné bat le
+sur-entraîné, une séance sautée ne se rattrape jamais ; 80 % du volume en aisance complète ; récupération dans les
+30' après l'effort (glucides + protéines 3:1) ; jamais d'ibuprofène autour de l'effort.
+Réponds en français, de façon concise, concrète et bienveillante. Propose toujours la plus petite progression
+possible. Ne donne jamais de conseil médical : en cas de douleur persistante, oriente vers un kiné ou un médecin.
+Contexte en temps réel ci-dessous (mis à jour à chaque question) :`;
+
+/* skill du coach selon le programme actif (PLAN_ID) */
+function coachSkillText() {
+  return (PLAN_ID === "panda-cat" || (RACE == null)) ? COACH_SKILL_PANDA : COACH_SKILL;
+}
+
 /* récupération Polar (si la montre est connectée) : résumé pour le coach —
    3 dernières nuits (sommeil, recharge ANS/VFC) + charge cardio récente.
    Règle transmise au coach : récupération compromise -> séance facile/échange. */
@@ -586,12 +782,13 @@ function coachContext() {
     .join("\n");
   const km = state.runs.reduce((a, r) => a + (r.dist || 0), 0);
   const dp = state.runs.reduce((a, r) => a + (r.dplus || 0), 0);
-  const j = daysBetween(isoDate(new Date()), RACE.date);
+  const j = RACE ? daysBetween(isoDate(new Date()), RACE.date) : null;
   return [
-    COACH_SKILL,
+    coachSkillText(),
     "\n[ÉTAT DU COUREUR]",
     "Date du jour : " + fmtDate(new Date()),
-    "Semaine en cours : S" + w + " (" + blk.name + (week.light ? ", allégée" : "") + "), J-" + j + " avant la course.",
+    "Semaine en cours : S" + w + " (" + blk.name + (week.light ? ", allégée" : "") + ")" +
+      (j != null ? ", J-" + j + " avant la course." : " — pas de course visée pour l'instant."),
     "Programme réalisé : " + donePct + " % des séances cochées ; volume semaine : " + fmtHours(wDone) + " / " + fmtHours(wPlan) + " h" +
       (extraMinutes(w) ? " (dont " + extraMinutes(w) + " min d'exercices hors programme)" : "") + ".",
     "Séances prévues aujourd'hui :\n" + today,

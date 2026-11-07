@@ -48,6 +48,28 @@ Le tunnel démarre au boot. Il reste à lancer `node server/server.js` : le
 plus simple est un service utilisateur systemd ou une entrée au démarrage
 de session.
 
+## 3. Montre Polar (MyPolar) via le tunnel
+
+`server/server.js` expose les mêmes routes `/api/polar/*` que le worker
+Cloudflare (`deploy/worker/src/worker.js`) : la synchro de la montre
+(sorties, FC, allure, GPX, sommeil, recharge) fonctionne donc aussi via
+l'URL du tunnel. Prérequis : Node >= 18 (fetch natif).
+
+1. Créer le client AccessLink sur https://admin.polaraccesslink.com (types
+   « Exercise data », « Sleep data », « Physical information ») et noter le
+   **client id** / **client secret**.
+2. **Authorization redirect URL** à déclarer chez Polar (correspondance
+   exacte) : `https://<hostname-du-tunnel>/api/polar/callback`
+   (ex. `https://maison.mytrailcoach.stream/api/polar/callback`).
+3. Renseigner les secrets sur le serveur, au choix :
+   - variables d'environnement au lancement :
+     `POLAR_CLIENT_ID=... POLAR_CLIENT_SECRET=... node server/server.js`
+   - ou fichier `server/data/polar-secrets.json` (non committé, .gitignore) :
+     `{ "clientId": "...", "clientSecret": "..." }`
+4. Dans l'app (ouverte via l'URL du tunnel) : Réglages → Montre Polar →
+   « Connecter ma montre Polar ». Le jeton est stocké dans
+   `server/data/polar.json` (non committé) et ne sort jamais de la machine.
+
 ## Notes
 
 - L'ordinateur doit rester allumé pour que l'URL réponde ; en cas de mise en
@@ -55,3 +77,6 @@ de session.
   aucune donnée n'est perdue (fusion additive).
 - Aucun port à ouvrir dans la box ; le tunnel sort en 443 sortant.
 - `journalctl -u cloudflared -f` pour suivre le tunnel en service.
+- Rappel Polar : seules les séances téléversées sur Polar Flow **après** la
+  connexion de la montre (et des 30 derniers jours) sont transmises — la
+  montre doit d'abord synchroniser avec l'appli Polar Flow du téléphone.

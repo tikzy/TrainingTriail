@@ -36,8 +36,10 @@ Après activation (mot de passe du coffre, le même sur tous les appareils) :
 - sans le mot de passe, le serveur **refuse l'accès** (en-tête `X-TT-Key`,
   SHA-256 stocké — jamais le mot de passe ni la clé) et le navigateur ne garde
   aucune copie en clair ;
-- le mot de passe est demandé à chaque chargement (les clés n'existent qu'en
-  mémoire) et il n'est récupérable par personne : perdu = données illisibles.
+- avec « Se souvenir sur cet appareil », le mot de passe n'est demandé qu'une
+  seule fois par appareil (les clés dérivées — jamais le mot de passe — restent
+  sur l'appareil jusqu'à « Verrouiller maintenant ») ;
+- il n'est récupérable par personne : perdu = données illisibles.
   Les traces GPS (R2 / fichiers `tracks/`) sont chiffrées de la même façon ;
 - le serveur limite en outre les requêtes par IP (fenêtre glissante, blocage
   après échecs répétés de clé), refuse les états plus anciens que sa copie
@@ -68,8 +70,42 @@ ANS/VFC, charge cardio) alimentée par la montre. Sans worker, exporter les GPX
 depuis Polar Flow et les importer dans l'onglet Sorties. Mise en place : voir
 `deploy/worker/README.md`.
 
+**Swatch (ex. GPS900)** : Swatch n'expose pas d'API ouverte type Polar AccessLink, donc
+pas de synchro automatique possible côté serveur. Le chemin supporté est l'**import GPX**
+dans l'onglet Traces (export GPX depuis l'app Swatch) : comme chaque compte a ses propres
+sorties, l'import se fait dans le compte actif (ex. El Fourbos) et y reste.
+
+**Import Polar (CSV/GPX + montre)** : réservé au compte **Roi Burgonde** (les autres
+comptes voient une note à la place). Onglet **Sessions → Nouveau → « Importer des
+fichiers .csv / .gpx »** (multi-fichiers) : CSV Polar Flow + GPX fusionnés par jour —
+le résumé CSV (km, durée, **D+ barométrique**, FC moy/max, calories) est prioritaire,
+le GPX n'apporte que la trace GPS ; dédoublonné par `polarId`, une course de +10 min
+reliée à la séance du jour coche le programme. La montre Polar (AccessLink) se connecte
+dans Réglages, idem compte Roi Burgonde uniquement.
+
 ## Fonctions
 
+- **Compte (Paramètres → Compte)** : onglet réservé au **changement de compte** entre amis,
+  **sans mot de passe** (dès que plusieurs comptes existent sur l'appareil, le verrou app
+  est désactivé). Le sélecteur « Compte » liste les comptes disponibles — **Roi Burgonde**,
+  **Panda Cat**, **El Fourbos** — et « Ouvrir » bascule dessus : à chaque ouverture de
+  compte, son GIF de bienvenue s'affiche et tous les onglets s'adaptent au programme du
+  compte. **Supprimer un compte (✕) exige le mot de passe administrateur**
+  (`Je-suis-1-Trainingtrail`) : la suppression efface le compte en local et sur le serveur.
+  Au premier chargement sur un appareil, un sélecteur modal propose la même liste.
+  Le verrou « 0612 » de l'app a été supprimé (plus de verrou app par défaut ; le chiffrement
+  du coffre reste le vrai verrou — même mot de passe sur tous les appareils, ex. changé en
+  `Vieuxtypeaction` : à reporter partout via Réglages → Changer le mot de passe du coffre).
+  Chaque session a son
+  propre état local (`localStorage`) et son propre emplacement serveur (`?user=<slug>` :
+  `state_<slug>.json` / `track_<slug>_<id>.json` côté Node, ligne D1 `sessions` et clés
+  R2 dédiées côté worker). La session du propriétaire (« Burgon King ») utilise
+  l'emplacement racine historique : aucune migration. À la première connexion d'une
+  session, un GIF de bienvenue s'affiche (assets/welcome/). Programmes disponibles :
+  Trail des Forts 72 km (plan de référence), le même plan réorganisé pour El Fourbos
+  (courses à midi en semaine, une seule séance le week-end), et un retour en douceur
+  de 12 semaines pour Panda Cat (3 courses à midi lun/mer/ven, renforcement court les
+  autres jours, cheville à ménager : proprioception quotidienne, terrain plat).
 - **Aujourd'hui** : séances du jour à cocher, aperçu de la semaine, compte à rebours,
   et lancement direct d'une séance de renforcement (RM-A, RM-B, RM-C, gainage) même
   en décalé — le site coche ensuite le premier créneau libre de la semaine.
@@ -125,6 +161,15 @@ depuis Polar Flow et les importer dans l'onglet Sorties. Mise en place : voir
 Le pied de page affiche le mode de stockage actif et « Enregistré à … » après
 chaque sauvegarde. Les traces GPS sont compressées automatiquement si le
 stockage du navigateur s'approche du quota.
+
+**Sauvegardes / restauration** : des snapshots centralisés sont conservés dans
+`sauvegardes/` (état du 2026-10-26 + dump D1). Pour restaurer l'état du serveur
+local : copier `sauvegardes/etat-central-2026-10-26.json` (champ `state`) dans
+`server/data/state.json`. Côté worker : `npx wrangler d1 execute trainingtrail --remote --file=sauvegardes/d1-trainingtrail-2026-10-26.sql`.
+La suppression d'un compte (DELETE /api/state) ne détruit plus rien côté serveur
+local : état et traces sont déplacés dans `server/data/trash/` (suffixés
+`.deleted-<timestamp>`), restaurables en renommant le fichier. Pense aussi à
+l'export JSON régulier (Réglages → Exporter mes données).
 
 ## Synchroniser les cochages entre appareils
 

@@ -5,7 +5,11 @@
      PUT  /api/auth   -> enregistre { salt, keyHash } du coffre (SHA-256 de la clé)
      GET  /api/state  -> état (blob chiffré {enc,salt,iv,ct} si coffre actif)
      PUT  /api/state  -> enregistre l'état (JSON) dans D1 (table `state`)
+     DELETE /api/state -> supprime la session (D1 + traces R2)
      GET/PUT/DELETE /api/track?id=... -> traces GPS (opaques, chiffrées côté client)
+   Multi-sessions : ?user=<slug> sur /api/state et /api/track -> ligne D1 dédiée
+   (table `sessions`) et clés R2 dédiées ; sans user, la session racine
+   (table `state` id=1, clés "track-<id>") est utilisée (rétrocompatible).
    Tout le reste est servi depuis les fichiers statiques de ../../site
    (liaison ASSETS, voir wrangler.toml). L'app ne change pas : ServerSync
    appelle "api/ping" et "api/state" en relatif, donc same-origin.
@@ -22,6 +26,34 @@
 const MAX_BODY = 2 * 1024 * 1024; // limite prototype : au-delà, passer les traces GPX sur R2
 const MAX_TRACK = 5 * 1024 * 1024; // trace GPS maximale en R2
 const KEY_RE = /^[A-Za-z0-9+/]{43}=$/; // b64(32 octets)
+
+/* ---- multi-sessions : ?user=<slug> -> ligne dédiée (table `sessions`) et
+      clés R2 dédiées ; sans user, la session racine (table `state` id=1,
+      clés "track-<id>") est utilisée — rétrocompatible, aucune migration. ---- */
+const USER_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+function checkUser(u) { return typeof u === "string" && (u === "" || USER_RE.test(u)) ? u : null; }
+async function readState(env, user) {
+  if (!user) {
+    const row = await env.DB.prepare("SELECT json, updated_at AS updatedAt FROM state WHERE id = 1").first();
+    return row ? { json: JSON.parse(row.json), updatedAt: row.updatedAt } : null;
+  }
+  const row = await env.DB.prepare("SELECT json, updated_at AS updatedAt FROM sessions WHERE id = ?").bind(user).first();
+  return row ? { json: JSON.parse(row.json), updatedAt: row.updatedAt } : null;
+}
+async function writeState(env, user, body, updatedAt) {
+  if (!user)
+    return env.DB.prepare("INSERT INTO state (id, json, updated_at) VALUES (1, ?, ?) " +
+      "ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at")
+      .bind(body, updatedAt).run();
+  return env.DB.prepare("INSERT INTO sessions (id, json, updated_at) VALUES (?, ?, ?) " +
+    "ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at")
+    .bind(user, body, updatedAt).run();
+}
+async function deleteState(env, user) {
+  if (!user) return env.DB.prepare("DELETE FROM state WHERE id = 1").run();
+  return env.DB.prepare("DELETE FROM sessions WHERE id = ?").bind(user).run();
+}
+function trackKey(user, id) { return "track-" + (user ? user + "-" : "") + id; }
 
 /* Polar AccessLink v3 : endpoints OAuth et API (https://www.polar.com/accesslink-api/) */
 const POLAR_AUTH = "https://flow.polar.com/oauth2/authorization";
@@ -331,54 +363,114 @@ export default {
         try {
           const p = await polarLoad();
           if (!p || !p.accessToken) throw { status: 503, error: "montre non connectée" };
-          /* la liste peut venir du jeton utilisateur OU des identifiants client
-             (ressource cliente selon la doc) : on fusionne, dédoublonnée par id */
-          const auths = [
-            "Bearer " + p.accessToken,
-            "Basic " + btoa(env.POLAR_CLIENT_ID + ":" + env.POLAR_CLIENT_SECRET)
-          ];
           const seen = {}, list = [];
           let lastErr = null;
-          for (const auth of auths) {
-            let res;
-            try {
-              res = await fetch(POLAR_API + "/exercises", {
-                headers: { "Authorization": auth, "Accept": "application/json" }
-              });
-            } catch (e) { lastErr = { status: 502, error: "Polar injoignable" }; continue; }
-            if (!res.ok) {
-              let body = "";
-              try { body = (await res.text()).slice(0, 300); } catch (e) { }
-              lastErr = { status: 502, error: "Polar a répondu " + res.status + (body ? " : " + body : "") };
-              continue;
-            }
-            let arr = null;
-            try { arr = await res.json(); } catch (e) { }
-            if (Array.isArray(arr)) arr.forEach(x => {
-              if (x && x.id && !seen[x.id]) { seen[x.id] = true; list.push(x); }
+          const add = (x) => {
+            if (x && x.id && !seen[x.id]) { seen[x.id] = true; list.push(x); }
+          };
+          const addSummary = (x, fallbackId) => {
+            if (!x) return;
+            if (!x.id && fallbackId != null) x.id = fallbackId;
+            add(x);
+          };
+
+          /* 1) API moderne : GET /v3/exercises (OAuth2, jeton utilisateur).
+             Renvoie des résumés complets (ExerciseHashId) ; « polar-user »
+             peut être un lien absolu (https://…/v3/users/123) et non un id nu. */
+          try {
+            const res = await fetch(POLAR_API + "/exercises", {
+              headers: { "Authorization": "Bearer " + p.accessToken, "Accept": "application/json" }
             });
+            if (res.ok) {
+              const arr = await res.json();
+              if (Array.isArray(arr)) arr.forEach(add);
+            } else if (res.status !== 401 && res.status !== 404) {
+              let body = "";
+              try { body = (await res.text()).slice(0, 200); } catch (e) { }
+              lastErr = { status: 502, error: "Polar a répondu " + res.status + " (exercises)" + (body ? " : " + body : "") };
+            }
+          } catch (e) { lastErr = lastErr || { status: 502, error: "Polar injoignable" }; }
+
+          /* 2) API historique (file transactionnelle) : les exercices non
+             encore consommés — en particulier ceux antérieurs à la connexion
+             qui n'apparaissent pas toujours dans la liste moderne.
+             POST  /v3/users/{uid}/exercise-transactions  -> 200 {transaction-id} | 204 (rien de neuf)
+             GET   /v3/users/{uid}/exercise-transactions/{tid} -> {exercises:[id]}
+             GET   /v3/users/{uid}/exercise-transactions/{tid}/exercises/{id} -> résumé
+             PUT   /v3/users/{uid}/exercise-transactions/{tid} -> commit (la file est vidée) */
+          if (p.xUserId != null) {
+            try {
+              const u = p.xUserId;
+              const auth = { "Authorization": "Bearer " + p.accessToken, "Accept": "application/json" };
+              const tres = await fetch(POLAR_API + "/users/" + u + "/exercise-transactions",
+                { method: "POST", headers: auth });
+              if (tres.status === 204) {
+                /* file vide : rien à consommer */
+              } else if (tres.ok) {
+                const t = await tres.json();
+                const tid = t && (t["transaction-id"] != null ? t["transaction-id"]
+                  : t["transactionId"] != null ? t["transactionId"]
+                  : t["transaction_id"] != null ? t["transaction_id"] : null);
+                if (tid != null) {
+                  const lres = await fetch(POLAR_API + "/users/" + u + "/exercise-transactions/" + tid,
+                    { headers: auth });
+                  if (lres.ok) {
+                    const data = await lres.json();
+                    const ids = data && Array.isArray(data.exercises) ? data.exercises : [];
+                    for (const eid of ids) {
+                      try {
+                        const sres = await fetch(POLAR_API + "/users/" + u + "/exercise-transactions/" + tid +
+                          "/exercises/" + eid + "?samples=true&zones=true", { headers: auth });
+                        if (!sres.ok) continue;
+                        addSummary(await sres.json(), eid);
+                      } catch (e) { /* un résumé manquant ne bloque pas les autres */ }
+                    }
+                  }
+                  /* commit systématique une fois la transaction lue : sinon les
+                     appels suivants échouent (transaction déjà ouverte) */
+                  try {
+                    await fetch(POLAR_API + "/users/" + u + "/exercise-transactions/" + tid,
+                      { method: "PUT", headers: auth });
+                  } catch (e) { }
+                }
+              }
+            } catch (e) { /* échec de la file historique : la liste moderne suffit */ }
           }
+
+          /* 3) repli client (Basic) : certaines implémentations l'acceptent */
+          try {
+            const res = await fetch(POLAR_API + "/exercises", {
+              headers: { "Authorization": "Basic " + btoa(env.POLAR_CLIENT_ID + ":" + env.POLAR_CLIENT_SECRET), "Accept": "application/json" }
+            });
+            if (res.ok) {
+              const arr = await res.json();
+              if (Array.isArray(arr)) arr.forEach(add);
+            }
+          } catch (e) { }
+
           if (lastErr && !list.length) throw lastErr;
-          /* Au niveau client, la liste couvre en théorie tous les inscrits ; on
-             privilégie les exercices de l'utilisateur connecté (x_user_id OAuth),
-             mais le filtre ne doit JAMAIS vider la liste : l'identifiant porté
-             par un exercice ne correspond pas toujours à x_user_id (non garanti
-             par la doc), et ce client n'a qu'un seul inscrit. */
-          const uid = p.xUserId;
+
+          /* filtre utilisateur : comparaison NORMALISÉE — « polar-user » peut être
+             un lien absolu (…/v3/users/123) ou un identifiant nu ; sans identifiant
+             explicite différent, on garde l'exercice (client mono-utilisateur) et le
+             filtre ne vide JAMAIS la liste */
+          const uidOf = (x) => {
+            const u = x["polar-user"] != null ? x["polar-user"]
+              : x["polar_user"] != null ? x["polar_user"]
+              : x["polar-user-id"] != null ? x["polar-user-id"] : null;
+            if (u == null) return null;
+            const m = String(u).match(/(\d+)\s*$/);
+            return m ? m[1] : null;
+          };
+          const uid = p.xUserId != null ? String(p.xUserId) : null;
           let mine = list;
           if (uid != null) {
-            const of = (x) => {
-              const u = x["polar-user"] != null ? x["polar-user"]
-                : x["polar_user"] != null ? x["polar_user"]
-                : x["polar-user-id"] != null ? x["polar-user-id"] : null;
-              return u == null ? null : String(u) === String(uid);
-            };
-            const matching = list.filter(x => of(x) !== false);
-            if (matching.length || list.length === 0) mine = matching;
+            const matching = list.filter(x => { const id = uidOf(x); return id == null || id === uid; });
+            if (matching.length) mine = matching;
           }
           p.lastSync = Date.now();
           await polarSave(p);
-          return json({ ok: true, exercises: mine, count: mine.length });
+          return json({ ok: true, exercises: mine, count: mine.length, seen: list.length });
         } catch (e) { return polarApiError(e); }
       }
 
@@ -452,11 +544,13 @@ export default {
        est opaque pour le serveur (chiffré côté client quand le coffre est actif). */
     if (url.pathname === "/api/track") {
       const id = url.searchParams.get("id");
+      const user = checkUser(url.searchParams.get("user") || "");
       if (!id || !/^\d{1,12}$/.test(id)) return jerr("id invalide", 400);
+      if (user === null) return jerr("user invalide", 400);
       if (!env.TRACKS) return jerr("stockage des traces non activé", 503);
       const c = await checkKey(request, env);
       if (!c.ok) { noteAuthFailure(request); return jerr("clé d'accès requise", 401); }
-      const key = "track-" + id;
+      const key = trackKey(user, id);
       if (request.method === "PUT") {
         try {
           const body = await request.text();
@@ -481,15 +575,15 @@ export default {
     }
 
     if (url.pathname === "/api/state") {
+      const user = checkUser(url.searchParams.get("user") || "");
+      if (user === null) return jerr("user invalide", 400);
       const c = await checkKey(request, env);
       if (!c.ok) { noteAuthFailure(request); return jerr("clé d'accès requise", 401); }
 
       if (request.method === "GET") {
-        const row = await env.DB
-          .prepare("SELECT json, updated_at AS updatedAt FROM state WHERE id = 1")
-          .first();
-        if (!row) return json({ ok: true, updatedAt: 0, state: null });
-        return json({ ok: true, updatedAt: row.updatedAt, state: JSON.parse(row.json) });
+        const cur = await readState(env, user);
+        if (!cur) return json({ ok: true, updatedAt: 0, state: null });
+        return json({ ok: true, updatedAt: cur.updatedAt, state: cur.json });
       }
 
       if (request.method === "PUT") {
@@ -501,9 +595,8 @@ export default {
             throw new Error("état invalide");
           const updatedAt = typeof obj.updatedAt === "number" ? obj.updatedAt : 0;
           /* anti-rollback : on refuse une version plus ancienne que la copie serveur */
-          const cur = await env.DB
-            .prepare("SELECT updated_at FROM state WHERE id = 1").first();
-          if (cur && typeof cur.updated_at === "number" && updatedAt < cur.updated_at)
+          const cur = await readState(env, user);
+          if (cur && typeof cur.updatedAt === "number" && updatedAt < cur.updatedAt)
             return jerr("état plus ancien que la copie du serveur", 409);
           /* premier envoi chiffré avec clé valide : le worker adopte le coffre
              (salt du blob + SHA-256 de la clé reçue) pour bloquer les accès sans clé */
@@ -516,15 +609,25 @@ export default {
                          "ON CONFLICT(id) DO UPDATE SET salt = excluded.salt, key_hash = excluded.key_hash, updated_at = excluded.updated_at")
                 .bind(String(obj.salt || ""), await sha256b64(key), Date.now()).run();
           }
-          await env.DB
-            .prepare("INSERT INTO state (id, json, updated_at) VALUES (1, ?, ?) " +
-                     "ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at")
-            .bind(body, updatedAt)
-            .run();
+          await writeState(env, user, body, updatedAt);
           return json({ ok: true, updatedAt: updatedAt });
         } catch (e) {
           return jerr(String(e && e.message || e), 400);
         }
+      }
+
+      if (request.method === "DELETE") {
+        /* supprime la session : état + traces R2 de cette session */
+        try {
+          await deleteState(env, user);
+          if (env.TRACKS) {
+            const listed = await env.TRACKS.list({ prefix: "track-" });
+            const mine = (listed.objects || []).filter(o =>
+              user ? o.key.startsWith("track-" + user + "-") : /^track-\d+$/.test(o.key));
+            await Promise.all(mine.map(o => env.TRACKS.delete(o.key).catch(() => { })));
+          }
+        } catch (e) { return jerr(String(e && e.message || e), 500); }
+        return json({ ok: true });
       }
 
       return jerr("méthode non autorisée", 405);

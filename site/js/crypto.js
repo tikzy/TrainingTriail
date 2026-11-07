@@ -15,14 +15,17 @@
    altération est détectée). */
 
 const VAULT_LS_KEY = "trainingtrail_v1_enc";
+const VAULT_KEY_LS = "trainingtrail_v1_keys"; // « se souvenir sur cet appareil »
 const Vault = {
   ITER: 600000,
   AAD_STATE: "trainingtrail:state:v1",
   AAD_TRACK: "trainingtrail:track:v1",
+  lsKey: VAULT_LS_KEY, // blob de la session active (app.js : suffixé par slug)
 
   salt: null,        // b64(16 octets) — public, voyage avec les blobs
   key: null,         // CryptoKey AES-GCM 256 — en mémoire uniquement
   apiKey: null,      // b64(32 octets) — en mémoire uniquement
+  bits: null,        // b64(64 octets) dérivés — pour « se souvenir » (localStorage)
   pendingBlob: null, // blob local en attente de déverrouillage (au chargement)
 
   get ready() { return !!this.key; },
@@ -31,13 +34,13 @@ const Vault = {
   /* blob chiffré rangé dans localStorage (null si aucun) */
   localBlob() {
     try {
-      const raw = localStorage.getItem(VAULT_LS_KEY);
+      const raw = localStorage.getItem(this.lsKey || VAULT_LS_KEY);
       const b = raw ? JSON.parse(raw) : null;
       return b && b.enc === 1 ? b : null;
     } catch (e) { return null; }
   },
 
-  /* dérivation pure : renvoie les clés SENS modifier le coffre (vérification
+  /* dérivation pure : renvoie les clés SANS modifier le coffre (vérification
      d'un mot de passe avant adoption, changement de mot de passe…) */
   async deriveKeys(password, saltB64) {
     const base = await crypto.subtle.importKey(
@@ -47,12 +50,46 @@ const Vault = {
       base, 512); /* 64 octets : 32 de chiffrement + 32 d'accès */
     return {
       salt: saltB64,
+      bits: b64enc(bits),
       key: await crypto.subtle.importKey("raw", bits.slice(0, 32), "AES-GCM", false, ["encrypt", "decrypt"]),
       apiKey: b64enc(bits.slice(32))
     };
   },
   async derive(password, saltB64) { this.adopt(await this.deriveKeys(password, saltB64)); },
-  adopt(keys) { this.salt = keys.salt; this.key = keys.key; this.apiKey = keys.apiKey; },
+  adopt(keys) {
+    this.salt = keys.salt;
+    this.bits = keys.bits || null;
+    this.key = keys.key;
+    this.apiKey = keys.apiKey;
+  },
+
+  /* « se souvenir sur cet appareil » : les clés dérivées restent sur l'appareil
+     (localStorage) jusqu'à « Verrouiller maintenant » — le mot de passe n'est
+     plus demandé au chargement. Le mot de passe lui-même n'est jamais stocké. */
+  saveLocal() {
+    try {
+      if (!this.bits || !this.salt) return false;
+      localStorage.setItem(VAULT_KEY_LS, JSON.stringify({ salt: this.salt, bits: this.bits }));
+      return true;
+    } catch (e) { return false; }
+  },
+  /* restaure les clés mémorisées ; true si le coffre est ouvert sans mot de passe */
+  async restore() {
+    try {
+      const raw = localStorage.getItem(VAULT_KEY_LS);
+      const k = raw ? JSON.parse(raw) : null;
+      if (!k || !k.salt || !k.bits) return false;
+      const bits = b64dec(k.bits);
+      this.salt = k.salt;
+      this.bits = k.bits;
+      this.key = await crypto.subtle.importKey("raw", bits.slice(0, 32), "AES-GCM", false, ["encrypt", "decrypt"]);
+      this.apiKey = b64enc(bits.slice(32));
+      return true;
+    } catch (e) { return false; }
+  },
+  forgetLocal() {
+    try { localStorage.removeItem(VAULT_KEY_LS); } catch (e) { }
+  },
 
   /* création du coffre : nouveau sel aléatoire, clés dérivées, mémorisées */
   async create(password) {

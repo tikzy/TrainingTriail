@@ -1,5 +1,8 @@
 # données runtime du serveur local : on commit l'état (sauvegarde), pas les
-# traces GPS, la corbeille ni le coffre (sel + hash de clé)
+# traces GPS, la corbeille, le coffre (sel + hash de clé) ni Polar
+# (jeton AccessLink + client id/secret)
 server/data/tracks/
 server/data/trash/
 server/data/auth.json
+server/data/polar.json
+server/data/polar-secrets.json

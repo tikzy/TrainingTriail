@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>TrainingTrail — Trail des Forts 72 km</title>
-<link rel="stylesheet" href="css/style.css?v=2026102809">
+<link rel="stylesheet" href="css/style.css?v=20261107">
 </head>
 <body>
 <header id="topbar">
@@ -18,12 +18,12 @@
     <span class="logo">⛰</span>
     <div>
       <div class="brand-title">TrainingTrail</div>
-      <div class="brand-sub">Trail des Forts — 72 km, 2 800 m D+ — 9 mai 2027</div>
+      <div class="brand-sub" id="brand-sub">Trail des Forts — 72 km, 2 800 m D+ — 9 mai 2027</div>
     </div>
   </div>
   <div class="topstats">
     <div class="tstat"><span id="hdr-week">S1</span><label>Semaine</label></div>
-    <div class="tstat"><span id="hdr-j">200</span><label>Jours avant course</label></div>
+    <div class="tstat"><span id="hdr-j">200</span><label id="hdr-j-label">Jours avant course</label></div>
     <div class="tstat"><span id="hdr-done">0%</span><label>Programme réalisé</label></div>
   </div>
   <button id="nav-toggle" class="icon-btn" title="Masquer les onglets">&#9662;</button>
@@ -54,11 +54,12 @@
   <section id="view-conseil" class="view"></section>
   <section id="view-coach" class="view"></section>
   <section id="view-shoes" class="view"></section>
+  <section id="view-compte" class="view"></section>
   <section id="view-settings" class="view"></section>
 </main>
 
 <footer id="foot">
-  Programme personnalisé du 19/10/2026 au 09/05/2027 · Données synchronisées avec le serveur centralisé quand il est joignable.
+  <span id="foot-plan">Programme personnalisé · Données synchronisées avec le serveur centralisé quand il est joignable.</span>
   <div id="storage-mode"></div>
   <div id="save-stamp"></div>
 </footer>
@@ -179,6 +180,21 @@
   </div>
 </div>
 
+<!-- Mot de passe administrateur (suppression d'un compte) -->
+<div id="adm-modal" class="modal hidden">
+  <div class="modal-box lock-box">
+    <div class="modal-head"><h3>Mot de passe administrateur</h3></div>
+    <div class="muted small" id="adm-desc">Action réservée à l'administrateur.</div>
+    <div class="form-grid">
+      <label class="full">Mot de passe <input type="password" id="adm-pass" autocomplete="off"></label>
+    </div>
+    <div class="row-actions">
+      <button class="btn" id="adm-cancel">Annuler</button>
+      <button class="btn primary" id="adm-go">Confirmer</button>
+    </div>
+  </div>
+</div>
+
 <!-- Plein écran d'un tracé (avec mode paysage) -->
 <div id="fs-plot" class="hidden">
   <div class="fs-inner">
@@ -189,10 +205,40 @@
 
 <div id="toast" class="hidden"></div>
 
-<script src="js/data.js?v=2026102809"></script>
+<!-- Choix de la session (multi-comptes) -->
+<div id="sess-modal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head"><h3>Qui est-ce ?</h3></div>
+    <div class="muted small">Chaque compte a son propre programme et ses propres données, synchronisées séparément sur le serveur. Choisis le compte dans la liste pour l'ouvrir (ses données arrivent du serveur si elles existent déjà).</div>
+    <div id="sess-list" class="sess-list"></div>
+    <div class="row-actions"><button class="btn primary" id="sess-new-btn">＋ Ouvrir un autre compte</button></div>
+    <div id="sess-form" class="hidden">
+      <div class="form-grid">
+        <label class="full">Compte <select id="sess-account"></select></label>
+      </div>
+      <div class="muted small">GIF de bienvenue : <img id="sess-gifprev" class="sess-gif sm" alt="aperçu du GIF"></div>
+      <div class="row-actions">
+        <button class="btn primary" id="sess-open">Ouvrir ce compte</button>
+        <button class="btn" id="sess-cancel">Annuler</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bienvenue : GIF à la première connexion de la session -->
+<div id="welcome-modal" class="modal hidden">
+  <div class="modal-box welcome-box">
+    <div class="modal-head"><h3 id="welcome-title">Bienvenue !</h3></div>
+    <div class="welcome-gif-wrap"><img id="welcome-gif" alt="Bienvenue"></div>
+    <div id="welcome-text" class="muted"></div>
+    <div class="row-actions"><button class="btn primary" id="welcome-ok">C'est parti</button></div>
+  </div>
+</div>
+
+<script src="js/data.js?v=2026110401"></script>
 <script src="js/anim.js?v=2026102809"></script>
 <script src="js/gpx.js?v=2026102809"></script>
-<script src="js/crypto.js?v=2026102811"></script>
-<script src="js/app.js?v=2026102811"></script>
+<script src="js/crypto.js?v=20261104"></script>
+<script src="js/app.js?v=20261107"></script>
 </body>
 </html>

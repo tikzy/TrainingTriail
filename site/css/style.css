@@ -675,7 +675,7 @@ details.shutter > .tip { margin: 8px 0 10px; }
   font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; line-height: 1;
 }
 .plot-svg { width: 100%; height: 130px; display: block; cursor: crosshair; border-radius: 8px;
-  background: rgba(255,255,255,0.03); }
+  background: rgba(255,255,255,0.03); touch-action: none; /* le geste sur le tracé pilote le réticule, ne scrolle pas la page */ }
 .plot-x { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 2px; }
 .plot-read {
   display: inline-block; margin-top: 4px; font-size: 12.5px; font-weight: 600; color: #bfe3ff;
@@ -717,3 +717,46 @@ details.shutter > .tip { margin: 8px 0 10px; }
 #fs-plot .plot-svg { height: 55vh; }
 #fs-plot.landscape .fs-inner { transform: rotate(90deg); width: 100vw; max-width: none; }
 #fs-plot.landscape .plot-svg { height: 62vh; }
+
+/* champs de mot de passe : oeil afficher/masquer a droite du champ */
+.pwd-field { position: relative; display: flex; align-items: center; }
+.pwd-field input { width: 100%; padding-right: 34px; }
+.pwd-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; padding: 2px 4px; margin: 0;
+  font-size: 15px; line-height: 1; cursor: pointer; opacity: 0.55;
+}
+.pwd-eye:hover { opacity: 1; }
+
+/* ---------- sessions (multi-comptes) & bienvenue ---------- */
+.sess-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.sess-card {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; cursor: pointer; color: var(--txt); font-family: inherit;
+}
+.sess-card:hover { border-color: var(--teal); }
+.sess-card.active { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal) inset; }
+.sess-card .sess-name { font-weight: 700; display: block; }
+.sess-card .sess-plan { display: block; }
+.sess-gif { width: 96px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: #000; flex: none; }
+.sess-gif.sm { width: 64px; height: 44px; }
+.sess-gif-ph {
+  width: 96px; height: 64px; border-radius: 8px; border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center; font-size: 26px; flex: none; background: var(--card2);
+}
+.sess-gif-ph.sm { width: 64px; height: 44px; font-size: 18px; }
+.sess-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px;
+}
+.sess-row.active { border-color: var(--teal); }
+.sess-row .sess-info { flex: 1; min-width: 0; }
+.sess-row .row-actions { margin: 0; }
+.welcome-box { text-align: center; }
+.welcome-gif-wrap { display: flex; justify-content: center; margin: 8px 0 12px; }
+.welcome-gif-wrap img {
+  max-width: 100%; width: min(420px, 80vw); max-height: 46vh; object-fit: contain;
+  border-radius: 12px; border: 1px solid var(--line); background: #000;
+}
+.welcome-box .row-actions { justify-content: center; }

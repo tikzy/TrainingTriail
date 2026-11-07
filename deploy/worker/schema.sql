@@ -7,6 +7,15 @@ CREATE TABLE IF NOT EXISTS state (
   updated_at INTEGER NOT NULL DEFAULT 0
 );
 
+-- Multi-sessions : chaque session nommée (?user=<slug>) a sa propre ligne ici.
+-- La session racine (sans ?user=) continue d'utiliser la table `state` (id = 1),
+-- aucune migration nécessaire sur les déploiements existants.
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,          -- slug de la session (ex. "panda-cat")
+  json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT 0
+);
+
 -- Jeton OAuth Polar AccessLink de l'utilisateur unique (jamais envoyé au navigateur).
 -- json : { memberId, accessToken, xUserId, connectedAt, lastSync, pendingState }
 CREATE TABLE IF NOT EXISTS polar (
